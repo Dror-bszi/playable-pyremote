@@ -174,3 +174,63 @@
   - Main Orchestrator: Hardware Producer crashes with restart, thread exceptions, shutdown timeout with force kill
   - _Requirements: 5.1, 5.2, 7.2, 7.3, 7.4, 9.5_
 
+- [ ] 9. Implement WiFi Hotspot Fallback System
+  - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8_
+
+- [ ] 9.1 Create WiFiManager class in network/wifi_manager.py
+  - Implement check_wifi_connection() to detect available known networks
+  - Implement start_hotspot() using hostapd and dnsmasq
+  - Implement stop_hotspot() to disable hotspot and return to client mode
+  - Implement connect_to_wifi() to attempt connection to specified network
+  - Implement save_wifi_credentials() to persist to wpa_supplicant.conf
+  - Create _get_device_id() to generate unique SSID suffix from MAC address
+  - _Requirements: 11.1, 11.2, 11.7, 11.8_
+
+- [ ] 9.2 Create hotspot configuration files
+  - Create config/hostapd.conf with SSID template, WPA2 security, channel 7
+  - Create config/dnsmasq.conf with DHCP range 192.168.4.2-192.168.4.20
+  - Set hotspot IP to 192.168.4.1
+  - Set default password to "playable2024"
+  - _Requirements: 11.2, 11.3, 11.4_
+
+- [ ] 9.3 Add WiFi configuration endpoints to web/server.py
+  - Implement /api/wifi/scan endpoint to return available networks with signal strength
+  - Implement /api/wifi/connect endpoint to accept SSID and password, save credentials, attempt connection
+  - Implement /api/wifi/status endpoint to return connection status, current SSID, IP address, hotspot status
+  - Integrate with WiFiManager class
+  - _Requirements: 11.4, 11.5, 11.6, 11.7_
+
+- [ ] 9.4 Add WiFi configuration UI to dashboard
+  - Create WiFi configuration panel in web/templates/dashboard.html
+  - Add network scan button and network selection dropdown
+  - Add password input field and connect button
+  - Add WiFi status display showing connection state and current network
+  - Create JavaScript functions in dashboard.js for scan, connect, status polling
+  - Show WiFi panel prominently when in hotspot mode
+  - _Requirements: 11.4, 11.5, 11.6_
+
+- [ ] 9.5 Integrate WiFi manager into main.py startup
+  - Import WiFiManager at startup
+  - Check WiFi connection before starting other components
+  - If no connection found, start hotspot mode and log hotspot SSID and IP
+  - Pass WiFiManager instance to Web Dashboard for status monitoring
+  - Add periodic WiFi connection check to detect network availability changes
+  - _Requirements: 11.1, 11.7, 11.8_
+
+- [ ] 9.6 Update install.sh for WiFi hotspot dependencies
+  - Install hostapd and dnsmasq packages
+  - Stop and disable hostapd and dnsmasq systemd services (managed by our script)
+  - Copy hostapd.conf to /etc/hostapd/
+  - Copy dnsmasq.conf to /etc/dnsmasq.conf
+  - Create and enable playable-wifi.service systemd service
+  - Set appropriate file permissions
+  - _Requirements: 11.1, 11.2, 11.3_
+
+- [ ] 9.7 Update README.md with WiFi setup documentation
+  - Document default hotspot SSID format (PlayAble-Setup-XXXX)
+  - Document default hotspot password
+  - Document hotspot IP address (192.168.4.1)
+  - Add step-by-step WiFi configuration instructions
+  - Add troubleshooting section for WiFi connectivity issues
+  - _Requirements: 11.2, 11.3, 11.4_
+

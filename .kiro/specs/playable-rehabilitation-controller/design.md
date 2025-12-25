@@ -760,6 +760,237 @@ class SystemStatus:
 - Create Named Pipe
 - Set up systemd service (optional)
 
+## WiFi Hotspot Fallback System
+
+### Overview
+
+When the Raspberry Pi cannot connect to any known WiFi network, it automatically creates a WiFi hotspot to allow network configuration without requiring a display, keyboard, or wired connection.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│           System Boot Sequence                       │
+│                                                      │
+│  1. Check for known WiFi networks                   │
+│  2. If none found → Start Hotspot Mode              │
+│  3. User connects to hotspot                        │
+│  4. User accesses Web Dashboard at 192.168.4.1      │
+│  5. User enters WiFi credentials                    │
+│  6. System connects to WiFi                         │
+│  7. Hotspot disabled, normal operation begins       │
+└─────────────────────────────────────────────────────┘
+```
+
+### Components
+
+**1. Network Manager Script (network/wifi_manager.py)**
+
+Responsibilities:
+- Check for available known WiFi networks on boot
+- Create WiFi hotspot using hostapd and dnsmasq if no networks found
+- Monitor WiFi connection status
+- Switch between hotspot mode and client mode
+- Persist WiFi credentials
+
+```python
+class WiFiManager:
+    """Manages WiFi connectivity and hotspot fallback."""
+    
+    def __init__(self):
+        self.hotspot_ssid = f"PlayAble-Setup-{self._get_device_id()}"
+        self.hotspot_password = "playable2024"  # Default password
+        self.hotspot_ip = "192.168.4.1"
+        self.is_hotspot_active = False
+    
+    def check_wifi_connection(self) -> bool:
+        """Check if connected to any known WiFi network."""
+        pass
+    
+    def start_hotspot(self):
+        """Create WiFi hotspot using hostapd and dnsmasq."""
+        pass
+    
+    def stop_hotspot(self):
+        """Disable hotspot and return to client mode."""
+        pass
+    
+    def connect_to_wifi(self, ssid: str, password: str) -> bool:
+        """Attempt to connect to specified WiFi network."""
+        pass
+    
+    def save_wifi_credentials(self, ssid: str, password: str):
+        """Persist WiFi credentials to wpa_supplicant.conf."""
+        pass
+    
+    def _get_device_id(self) -> str:
+        """Get unique device identifier for SSID."""
+        # Use last 4 chars of MAC address
+        pass
+```
+
+**2. Hotspot Configuration Files**
+
+hostapd.conf:
+```
+interface=wlan0
+driver=nl80211
+ssid=PlayAble-Setup-XXXX
+hw_mode=g
+channel=7
+wmm_enabled=0
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=2
+wpa_passphrase=playable2024
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+```
+
+dnsmasq.conf:
+```
+interface=wlan0
+dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
+domain=wlan
+address=/playable.local/192.168.4.1
+```
+
+**3. Web Dashboard WiFi Configuration Page**
+
+New endpoint in web/server.py:
+
+```python
+@app.route('/api/wifi/scan', methods=['GET'])
+def scan_wifi():
+    """Scan for available WiFi networks."""
+    # Return list of SSIDs with signal strength
+    pass
+
+@app.route('/api/wifi/connect', methods=['POST'])
+def connect_wifi():
+    """Connect to WiFi network with provided credentials."""
+    # Expects: {"ssid": "network_name", "password": "password"}
+    # Save credentials and attempt connection
+    # Return success/failure status
+    pass
+
+@app.route('/api/wifi/status', methods=['GET'])
+def wifi_status():
+    """Return current WiFi connection status."""
+    return {
+        'connected': bool,
+        'ssid': str,
+        'ip_address': str,
+        'hotspot_active': bool,
+        'hotspot_ssid': str
+    }
+```
+
+New UI section in dashboard.html:
+```html
+<div id="wifi-config-panel" style="display: none;">
+    <h2>WiFi Configuration</h2>
+    <p>Connect to a WiFi network to continue</p>
+    <button onclick="scanNetworks()">Scan Networks</button>
+    <select id="wifi-networks"></select>
+    <input type="password" id="wifi-password" placeholder="Password">
+    <button onclick="connectWiFi()">Connect</button>
+    <div id="wifi-status"></div>
+</div>
+```
+
+**4. Systemd Service for Auto-Start**
+
+Create /etc/systemd/system/playable-wifi.service:
+```
+[Unit]
+Description=PlayAble WiFi Manager
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /home/pi/playable/network/wifi_manager.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Boot Sequence Integration
+
+Modified main.py startup:
+
+```python
+def main():
+    # 1. Check WiFi connectivity
+    wifi_manager = WiFiManager()
+    
+    if not wifi_manager.check_wifi_connection():
+        print("No WiFi connection found. Starting hotspot mode...")
+        wifi_manager.start_hotspot()
+        print(f"Hotspot active: {wifi_manager.hotspot_ssid}")
+        print(f"Connect and visit: http://{wifi_manager.hotspot_ip}:5000")
+    
+    # 2. Create named pipe
+    if not os.path.exists('/tmp/my_pipe'):
+        os.mkfifo('/tmp/my_pipe')
+    
+    # 3. Start all components as before...
+    # (Hardware Producer, Vision Sensor, Web Dashboard)
+```
+
+### Installation Requirements
+
+Additional system dependencies:
+- hostapd (WiFi access point daemon)
+- dnsmasq (DHCP and DNS server)
+- iptables (for NAT if internet sharing needed)
+
+Updated install.sh:
+```bash
+# Install WiFi hotspot dependencies
+sudo apt-get install -y hostapd dnsmasq
+
+# Stop services (will be managed by our script)
+sudo systemctl stop hostapd
+sudo systemctl stop dnsmasq
+sudo systemctl disable hostapd
+sudo systemctl disable dnsmasq
+
+# Copy configuration files
+sudo cp config/hostapd.conf /etc/hostapd/
+sudo cp config/dnsmasq.conf /etc/dnsmasq.conf
+
+# Install systemd service
+sudo cp config/playable-wifi.service /etc/systemd/system/
+sudo systemctl enable playable-wifi.service
+```
+
+### Security Considerations
+
+- Default hotspot password should be changed after first setup
+- Hotspot should only be active when no WiFi connection available
+- Web dashboard should show warning when in hotspot mode
+- Consider adding timeout to auto-disable hotspot after 30 minutes
+- WiFi credentials stored in wpa_supplicant.conf (encrypted by system)
+
+### User Experience Flow
+
+1. User powers on Raspberry Pi without configured WiFi
+2. System boots and detects no WiFi connection
+3. Hotspot "PlayAble-Setup-XXXX" appears
+4. User connects phone/laptop to hotspot using default password
+5. User navigates to http://192.168.4.1:5000
+6. Dashboard shows WiFi configuration panel
+7. User scans for networks and selects their WiFi
+8. User enters WiFi password and clicks Connect
+9. System connects to WiFi and disables hotspot
+10. Dashboard shows normal operation mode
+11. User can now access dashboard via new IP address on their network
+
 ## Future Enhancements
 
 1. **Multiple Camera Support**: Track full body with multiple angles

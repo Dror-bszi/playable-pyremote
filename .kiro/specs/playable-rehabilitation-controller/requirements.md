@@ -163,3 +163,18 @@ PlayAble is a hybrid gesture-to-game control system designed for physical rehabi
 3. WHEN a gesture is successfully detected, THE Web Dashboard SHALL display a visual indicator
 4. THE Web Dashboard SHALL display the current position values for tracked body parts
 5. THE Web Dashboard SHALL update visual feedback in real-time with the camera feed
+
+### Requirement 11
+
+**User Story:** As a system administrator, I want the Raspberry Pi to automatically become a WiFi hotspot when no known networks are available, so that I can configure network credentials without needing a wired connection or display
+
+#### Acceptance Criteria
+
+1. WHEN the Raspberry Pi boots and cannot connect to any known WiFi network, THE System SHALL automatically create a WiFi hotspot
+2. THE WiFi hotspot SHALL have a recognizable SSID (e.g., "PlayAble-Setup-XXXX" where XXXX is a unique identifier)
+3. THE WiFi hotspot SHALL be secured with a default password documented in the installation guide
+4. WHEN a user connects to the hotspot, THE Web Dashboard SHALL be accessible at a known IP address (e.g., 192.168.4.1)
+5. THE Web Dashboard SHALL provide a network configuration page for entering WiFi credentials
+6. WHEN valid WiFi credentials are submitted, THE System SHALL attempt to connect to the specified network
+7. WHEN the connection to the new WiFi network is successful, THE System SHALL disable the hotspot and operate in normal mode
+8. THE System SHALL automatically retry the hotspot mode if the configured WiFi network becomes unavailable

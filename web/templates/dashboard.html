@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PlayAble Dashboard - Rehabilitation Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>PlayAble Rehabilitation Controller</h1>
+            <p class="subtitle">Gesture-Based Gaming for Physical Therapy</p>
+        </header>
+
+        <div class="dashboard-grid">
+            <!-- PSN Connection Panel -->
+            <section class="panel psn-panel">
+                <h2>PSN Connection</h2>
+                <div class="psn-status">
+                    <span class="status-indicator" id="psn-auth-status">Not Authenticated</span>
+                </div>
+                
+                <div class="psn-controls">
+                    <button id="btn-psn-login" class="btn btn-primary">Start PSN Login</button>
+                    
+                    <div id="auth-url-section" class="hidden">
+                        <p class="info-text">Visit this URL to authenticate:</p>
+                        <input type="text" id="auth-url" readonly class="url-input">
+                        <button id="btn-copy-url" class="btn btn-secondary">Copy URL</button>
+                    </div>
+                    
+                    <div id="redirect-section" class="hidden">
+                        <label for="redirect-url">Paste Redirect URL:</label>
+                        <input type="text" id="redirect-url" placeholder="https://remoteplay.dl.playstation.net/...">
+                        <button id="btn-submit-redirect" class="btn btn-primary">Submit</button>
+                    </div>
+                    
+                    <div id="pin-section" class="hidden">
+                        <label for="pin-code">Enter PIN from PS5:</label>
+                        <input type="text" id="pin-code" placeholder="12345678" maxlength="8">
+                        <button id="btn-submit-pin" class="btn btn-primary">Submit PIN</button>
+                    </div>
+                    
+                    <div id="connection-section" class="hidden">
+                        <label for="ps5-host">PS5 IP Address (optional):</label>
+                        <input type="text" id="ps5-host" placeholder="192.168.1.100">
+                        <button id="btn-connect" class="btn btn-success">Connect to PS5</button>
+                        <button id="btn-disconnect" class="btn btn-danger hidden">Disconnect</button>
+                    </div>
+                </div>
+                
+                <div id="psn-message" class="message hidden"></div>
+            </section>
+
+            <!-- Status Panel -->
+            <section class="panel status-panel">
+                <h2>System Status</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">PSN Authenticated:</span>
+                        <span class="status-value" id="status-psn-auth">❌</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">PS5 Connected:</span>
+                        <span class="status-value" id="status-ps5">❌</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Controller:</span>
+                        <span class="status-value" id="status-controller">❌</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Camera:</span>
+                        <span class="status-value" id="status-camera">❌</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">FPS:</span>
+                        <span class="status-value" id="status-fps">0</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Video Feed -->
+            <section class="panel video-panel">
+                <h2>Live Camera Feed</h2>
+                <div class="video-container">
+                    <img id="video-feed" src="{{ url_for('video_feed') }}" alt="Camera Feed">
+                    <div id="gesture-indicator" class="gesture-indicator hidden">
+                        <span id="gesture-text">Gesture Detected!</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Threshold Controls -->
+            <section class="panel threshold-panel">
+                <h2>Detection Thresholds</h2>
+                <div class="threshold-controls">
+                    <div class="control-group">
+                        <label for="delta-threshold">
+                            Delta Threshold (Speed): <span id="delta-value">0.05</span>
+                        </label>
+                        <input type="range" id="delta-threshold" min="0.01" max="2.0" step="0.01" value="0.05">
+                        <span class="range-labels">
+                            <span>0.01</span>
+                            <span>2.0</span>
+                        </span>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label for="raise-minimum">
+                            Raise Minimum (Range): <span id="raise-value">0.1</span>
+                        </label>
+                        <input type="range" id="raise-minimum" min="0.0" max="1.0" step="0.01" value="0.1">
+                        <span class="range-labels">
+                            <span>0.0</span>
+                            <span>1.0</span>
+                        </span>
+                    </div>
+                    
+                    <button id="btn-update-thresholds" class="btn btn-primary">Apply Thresholds</button>
+                </div>
+                <div id="threshold-message" class="message hidden"></div>
+            </section>
+
+            <!-- Gesture Mapping -->
+            <section class="panel mapping-panel">
+                <h2>Gesture Mappings</h2>
+                
+                <div class="mapping-controls">
+                    <div class="control-group">
+                        <label for="gesture-select">Gesture:</label>
+                        <select id="gesture-select">
+                            <option value="left_elbow_raise">Left Elbow Raise</option>
+                            <option value="right_elbow_raise">Right Elbow Raise</option>
+                            <option value="left_arm_forward">Left Arm Forward</option>
+                            <option value="right_arm_forward">Right Arm Forward</option>
+                            <option value="shoulder_shrug">Shoulder Shrug</option>
+                        </select>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label for="button-select">Button:</label>
+                        <select id="button-select">
+                            <option value="CROSS">Cross (X)</option>
+                            <option value="CIRCLE">Circle (O)</option>
+                            <option value="SQUARE">Square (□)</option>
+                            <option value="TRIANGLE">Triangle (△)</option>
+                            <option value="L1">L1</option>
+                            <option value="L2">L2</option>
+                            <option value="R1">R1</option>
+                            <option value="R2">R2</option>
+                        </select>
+                    </div>
+                    
+                    <button id="btn-add-mapping" class="btn btn-primary">Add Mapping</button>
+                </div>
+                
+                <div class="active-mappings">
+                    <h3>Active Mappings</h3>
+                    <ul id="mappings-list">
+                        <!-- Mappings will be populated by JavaScript -->
+                    </ul>
+                </div>
+                
+                <div id="mapping-message" class="message hidden"></div>
+            </section>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

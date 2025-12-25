@@ -1,0 +1,13 @@
+wheel
+pyps4-2ndscreen>=1.2.1
+cryptography>=3.4.6
+protobuf>=4.21.1
+requests>=2.25.1
+pyee==11.0.1
+pyyaml>=6.0
+netifaces>=0.11.0
+async-timeout
+opencv-python>=4.8.0
+mediapipe>=0.10.0
+flask>=2.3.0
+flask-cors>=4.0.0

@@ -1,0 +1,35 @@
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# CMake
+build/
+cmake-build-debug/
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+controller/CMakeFiles/
+controller/build/
+
+# Named pipes
+/tmp/my_pipe
+
+# Config (if contains sensitive data)
+# config/mappings.json
+
+# Logs
+*.log

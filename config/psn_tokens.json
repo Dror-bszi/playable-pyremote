@@ -1,0 +1,16 @@
+{
+  "scopes": "psn:clientapp",
+  "expiration": "2025-12-30T22:38:44.509Z",
+  "client_id": "ba495a24-818c-472b-b12d-ff231c1b5745",
+  "dcim_id": "ce2fe82d-2c9e-4b58-9cbf-c59fc3a86e45",
+  "grant_type": "authorization_code",
+  "user_id": "108147958454922510",
+  "user_uuid": "b8233e9a-3437-43e4-bb1e-810426423008",
+  "online_id": "Dror-z",
+  "country_code": "US",
+  "language_code": "en",
+  "community_domain": "b4",
+  "is_sub_account": false,
+  "user_rpid": "Dq3jxv43gAE=",
+  "credentials": "cdeeef62977346fb7aff9fea599cd035bc525eec372a270ed6c082ed8f168f38"
+}

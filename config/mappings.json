@@ -4,9 +4,6 @@
     "raise_minimum": 0.1
   },
   "mappings": {
-    "left_elbow_raise": "SQUARE",
-    "right_elbow_raise": "CIRCLE",
-    "left_arm_forward": "L1",
-    "right_arm_forward": "R1"
+    "left_elbow_raise": "CIRCLE"
   }
 }

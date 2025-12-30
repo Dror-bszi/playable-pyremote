@@ -13,31 +13,37 @@ from core.gestures import GestureDetector
 from core.mappings import GestureMapping
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure logging (if not already configured by main)
+# Only configure if root logger has no handlers
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 logger = logging.getLogger(__name__)
 
 
 class VisionSensor:
     """Main vision sensor that detects gestures and writes to Named Pipe."""
     
-    def __init__(self, pipe_path: str = '/tmp/my_pipe', camera_index: int = 0):
+    def __init__(self, pipe_path: str = '/tmp/my_pipe', camera_index: int = 0,
+                 gesture_detector: Optional[GestureDetector] = None,
+                 gesture_mapping: Optional[GestureMapping] = None):
         """
         Initialize Vision Sensor.
         
         Args:
             pipe_path: Path to Named Pipe for writing button events
-            camera_index: Camera device index
+            camera_index: Camera device index (only used if gesture_detector not provided)
+            gesture_detector: Shared GestureDetector instance (optional, creates new if None)
+            gesture_mapping: Shared GestureMapping instance (optional, creates new if None)
         """
         self.pipe_path = pipe_path
         self.camera_index = camera_index
         
         # Initialize gesture detection components
-        self.gesture_detector = None
-        self.gesture_mapping = None
+        self.gesture_detector = gesture_detector
+        self.gesture_mapping = gesture_mapping
         
         # Track active gesture states to send press/release only on state changes
         self.active_gestures: Set[str] = set()
@@ -47,14 +53,44 @@ class VisionSensor:
         self.start_time = time.time()
         self.last_fps_log = time.time()
         
+        # Slow frame tracking (for aggregated warnings)
+        self.slow_frame_count = 0
+        self.slow_frame_times = []
+        self.last_slow_frame_log = time.time()
+        self.slow_frame_log_interval = 10.0  # Log summary every 10 seconds
+        
         # Pipe file handle
         self.pipe = None
         
+        # Pipe retry tracking (for periodic reconnection attempts)
+        self.last_pipe_retry = time.time()
+        self.pipe_retry_interval = 5.0  # Retry opening pipe every 5 seconds if not connected
+        
         # Running state
         self.running = False
+        
+        # Camera availability flag
+        self.camera_available = False
     
     def initialize(self):
         """Initialize gesture detector and mapping configuration with retry logic."""
+        # If gesture_detector and gesture_mapping are already provided, use them
+        if self.gesture_detector is not None and self.gesture_mapping is not None:
+            logger.info("Using provided GestureDetector and GestureMapping...")
+            # Verify camera is accessible
+            if self.gesture_detector.is_active():
+                logger.info("Vision Sensor initialized successfully (using shared instances)")
+                logger.info(f"Active mappings: {self.gesture_mapping.get_active_mappings()}")
+                thresholds = self.gesture_mapping.get_thresholds()
+                logger.info(f"Thresholds: {thresholds}")
+                self.camera_available = True
+                return
+            else:
+                logger.warning("Provided GestureDetector camera is not active")
+                self.camera_available = False
+                return
+        
+        # Otherwise, create new instances (for standalone operation)
         max_retries = 3
         retry_delay = 2
         
@@ -76,6 +112,7 @@ class VisionSensor:
                 logger.info("Vision Sensor initialized successfully")
                 logger.info(f"Active mappings: {self.gesture_mapping.get_active_mappings()}")
                 logger.info(f"Thresholds: {thresholds}")
+                self.camera_available = True
                 return
                 
             except RuntimeError as e:
@@ -86,10 +123,17 @@ class VisionSensor:
                     time.sleep(retry_delay)
                 else:
                     logger.error("Failed to initialize camera after all retries")
-                    raise RuntimeError(
-                        f"Camera not found at index {self.camera_index}. "
-                        "Please check camera connection and permissions."
+                    logger.warning(
+                        f"Camera not available at index {self.camera_index}. "
+                        "Vision Sensor will continue running without gesture detection. "
+                        "Please connect a camera and restart to enable gesture detection."
                     )
+                    self.camera_available = False
+                    # Still initialize gesture_mapping even without camera
+                    if self.gesture_mapping is None:
+                        logger.info("Loading GestureMapping configuration...")
+                        self.gesture_mapping = GestureMapping()
+                    return
             except ImportError as e:
                 # MediaPipe initialization failure
                 logger.error(f"MediaPipe initialization failed: {e}")
@@ -103,21 +147,31 @@ class VisionSensor:
                 else:
                     raise
     
-    def open_pipe(self):
-        """Open Named Pipe for writing with retry logic."""
+    def open_pipe(self, verbose=True):
+        """
+        Open Named Pipe for writing with retry logic and non-blocking mode.
+        
+        Args:
+            verbose: If False, reduce logging verbosity (for periodic retries)
+        """
         max_retries = 5
         retry_delay = 2
         
         for attempt in range(max_retries):
             try:
-                logger.info(f"Opening Named Pipe: {self.pipe_path} (attempt {attempt + 1}/{max_retries})")
+                if verbose or attempt == 0:
+                    logger.info(f"Opening Named Pipe: {self.pipe_path} (attempt {attempt + 1}/{max_retries})")
                 
                 # Check if pipe exists
                 if not os.path.exists(self.pipe_path):
                     raise FileNotFoundError(f"Named Pipe not found: {self.pipe_path}")
                 
-                # Open pipe in write mode (blocking until reader connects)
-                self.pipe = open(self.pipe_path, 'w')
+                # Open pipe in non-blocking mode to avoid hanging
+                import fcntl
+                fd = os.open(self.pipe_path, os.O_WRONLY | os.O_NONBLOCK)
+                # Convert to blocking mode after successful open
+                fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+                self.pipe = os.fdopen(fd, 'w')
                 
                 logger.info("Named Pipe opened successfully")
                 return
@@ -128,23 +182,28 @@ class VisionSensor:
                     logger.info(f"Waiting for pipe to be created... Retrying in {retry_delay} seconds")
                     time.sleep(retry_delay)
                 else:
-                    logger.error("Please ensure the pipe is created before starting Vision Sensor")
-                    raise
-            except BrokenPipeError:
-                logger.warning("Pipe reader not ready yet")
+                    logger.warning("Named Pipe not found - Vision Sensor will continue without pipe output")
+                    self.pipe = None
+                    return
+            except (OSError, BlockingIOError) as e:
+                # Pipe reader not ready (EAGAIN/EWOULDBLOCK)
                 if attempt < max_retries - 1:
+                    logger.warning(f"Pipe reader not ready yet: {e}")
                     logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                 else:
-                    logger.error("Failed to connect to pipe reader")
-                    raise
+                    logger.warning("Failed to connect to pipe reader - Vision Sensor will continue without pipe output")
+                    self.pipe = None
+                    return
             except Exception as e:
                 logger.error(f"Failed to open Named Pipe: {e}")
                 if attempt < max_retries - 1:
                     logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                 else:
-                    raise
+                    logger.warning("Could not open Named Pipe - Vision Sensor will continue without pipe output")
+                    self.pipe = None
+                    return
     
     def write_button_event(self, button_name: str, action: str) -> bool:
         """
@@ -303,24 +362,75 @@ class VisionSensor:
             
             if not mappings:
                 logger.warning("No gesture mappings configured - no gestures will be detected")
+            else:
+                logger.info(f"Active gesture mappings: {mappings}")
+                logger.info(f"Detection thresholds: {self.gesture_mapping.get_thresholds()}")
             
             # Main processing loop
-            logger.info("Vision Sensor running - processing frames...")
+            if self.camera_available:
+                logger.info("Vision Sensor running - processing frames...")
+            else:
+                logger.info("Vision Sensor running - camera unavailable, gesture detection disabled")
             
             while self.running:
                 loop_start = time.time()
                 
-                # Detect gestures in current frame
-                detected_events = self.gesture_detector.detect_gestures(mappings)
+                # Periodically retry opening pipe if not connected
+                # This allows reconnection after Remote Play/PipeReader starts
+                if self.pipe is None:
+                    current_time = time.time()
+                    if current_time - self.last_pipe_retry >= self.pipe_retry_interval:
+                        # Use verbose=False to reduce log spam during periodic retries
+                        # Only log on first retry attempt
+                        if not hasattr(self, '_pipe_retry_count'):
+                            self._pipe_retry_count = 0
+                        self._pipe_retry_count += 1
+                        
+                        if self._pipe_retry_count == 1:
+                            logger.info("Pipe not connected, attempting periodic reconnection...")
+                        else:
+                            logger.debug(f"Retrying pipe connection (attempt {self._pipe_retry_count})...")
+                        
+                        self.open_pipe(verbose=False)
+                        self.last_pipe_retry = current_time
+                        if self.pipe is not None:
+                            logger.info("✓ Pipe reconnected successfully!")
+                            self._pipe_retry_count = 0  # Reset counter on success
                 
-                # Process events and send state changes to pipe
-                self.process_gesture_events(detected_events)
+                # Only detect gestures if camera is available
+                if self.camera_available and self.gesture_detector:
+                    # Detect gestures in current frame
+                    detected_events = self.gesture_detector.detect_gestures(mappings)
+                    
+                    # Log detection activity
+                    if detected_events:
+                        press_events = [e for e in detected_events if e[1] == 'press']
+                        release_events = [e for e in detected_events if e[1] == 'release']
+                        if press_events:
+                            logger.info(f"✓ Gestures detected: {press_events}")
+                        # Log releases less frequently to reduce spam
+                        if release_events and hasattr(self, '_release_log_counter'):
+                            self._release_log_counter += 1
+                            if self._release_log_counter % 10 == 0:
+                                logger.debug(f"Gesture releases: {release_events}")
+                        elif release_events:
+                            self._release_log_counter = 0
+                    
+                    # Process events and send state changes to pipe
+                    self.process_gesture_events(detected_events)
+                else:
+                    # Camera not available - release any active gestures
+                    if self.active_gestures:
+                        for button_name in list(self.active_gestures):
+                            self.write_button_event_with_retry(button_name, 'release')
+                        self.active_gestures.clear()
                 
                 # Update frame count
                 self.frame_count += 1
                 
-                # Log FPS periodically
-                self.log_fps()
+                # Log FPS periodically (only if camera available)
+                if self.camera_available:
+                    self.log_fps()
                 
                 # Calculate frame processing time
                 loop_time = time.time() - loop_start
@@ -331,19 +441,40 @@ class VisionSensor:
                 
                 if sleep_time > 0:
                     time.sleep(sleep_time)
-                elif loop_time > target_frame_time * 1.5:
-                    # Warn if processing is significantly slower than target
-                    logger.warning(
-                        f"Frame processing slow: {loop_time*1000:.1f}ms "
-                        f"(target: {target_frame_time*1000:.1f}ms)"
-                    )
+                elif loop_time > target_frame_time * 1.5 and self.camera_available:
+                    # Track slow frames instead of logging each one
+                    self.slow_frame_count += 1
+                    self.slow_frame_times.append(loop_time * 1000)  # Store in ms
+                    
+                    # Log aggregated summary periodically
+                    current_time = time.time()
+                    if current_time - self.last_slow_frame_log >= self.slow_frame_log_interval:
+                        if self.slow_frame_count > 0:
+                            avg_slow_time = sum(self.slow_frame_times) / len(self.slow_frame_times)
+                            max_slow_time = max(self.slow_frame_times)
+                            min_slow_time = min(self.slow_frame_times)
+                            
+                            logger.warning(
+                                f"Performance: {self.slow_frame_count} slow frames in last "
+                                f"{self.slow_frame_log_interval:.0f}s | "
+                                f"Avg: {avg_slow_time:.1f}ms | "
+                                f"Min: {min_slow_time:.1f}ms | "
+                                f"Max: {max_slow_time:.1f}ms | "
+                                f"Target: {target_frame_time*1000:.1f}ms"
+                            )
+                            
+                            # Reset counters
+                            self.slow_frame_count = 0
+                            self.slow_frame_times = []
+                            self.last_slow_frame_log = current_time
         
         except KeyboardInterrupt:
             logger.info("Vision Sensor interrupted by user")
         
         except Exception as e:
             logger.error(f"Vision Sensor error: {e}", exc_info=True)
-            raise
+            # Don't raise - continue running even if there's an error
+            logger.warning("Vision Sensor will continue running despite error")
         
         finally:
             self.cleanup()

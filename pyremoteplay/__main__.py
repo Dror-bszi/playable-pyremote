@@ -10,6 +10,8 @@ from collections import OrderedDict
 import socket
 import atexit
 from time import sleep
+import os
+import json
 
 from .ddp import search
 from .oauth import prompt as oauth_prompt
@@ -207,16 +209,69 @@ def cli(device: RPDevice, test: bool = False):
     if not status:
         print(f"Could not reach host at: {device.host}")
         sys.exit()
+    
     profiles = RPDevice.get_profiles()
+    user = None
+    
+    # Check for PSN_TOKEN environment variable (non-interactive mode)
+    psn_token_env = os.environ.get('PSN_TOKEN')
+    if psn_token_env:
+        try:
+            account_data = json.loads(psn_token_env)
+            _LOGGER.info("Found PSN_TOKEN in environment, creating/updating profile automatically")
+            
+            # Create profile from account data
+            new_user_profile = format_user_account(account_data)
+            if new_user_profile:
+                if not profiles:
+                    profiles = Profiles()
+                
+                # Check if profile already exists
+                existing_profile = profiles.get_user_profile(new_user_profile.name)
+                if existing_profile:
+                    # Preserve existing hosts data
+                    existing_hosts = existing_profile.data.get("hosts", {})
+                    _LOGGER.info(f"Profile for user {new_user_profile.name} already exists, preserving host registration data")
+                    # Update account info but keep hosts
+                    new_user_profile.data["hosts"] = existing_hosts
+                    profiles.update_user(new_user_profile)
+                    _LOGGER.info(f"Updated profile for user: {new_user_profile.name} (preserved {len(existing_hosts)} host(s))")
+                else:
+                    # New profile, no hosts to preserve
+                    profiles.update_user(new_user_profile)
+                    _LOGGER.info(f"Created new profile for user: {new_user_profile.name}")
+                
+                profiles.save()
+                user = new_user_profile.name
+            else:
+                _LOGGER.error("Failed to format user account from PSN_TOKEN")
+        except (json.JSONDecodeError, Exception) as e:
+            _LOGGER.error(f"Failed to parse PSN_TOKEN: {e}")
+    
+    # If we have profiles, select one (interactive if needed)
     if profiles:
-        user = select_profile(profiles, True, False)
-        if user not in device.get_users():
-            print(f"User: {user} not registered with this device.\n")
-            link_profile(device, user)
+        if user is None:
+            # Interactive selection only if not already set from PSN_TOKEN
+            user = select_profile(profiles, True, False)
+        
+        # Check if user is registered with device
+        registered_users = device.get_users()
+        if user not in registered_users:
+            # If PSN_TOKEN was provided, skip interactive registration
+            # (assume device is already registered via web interface)
+            if psn_token_env:
+                _LOGGER.warning(f"User: {user} not found in device registered users list, but continuing anyway (non-interactive mode)")
+                _LOGGER.info("Assuming device registration was done via web interface")
+            else:
+                # Interactive mode - prompt for PIN
+                print(f"User: {user} not registered with this device.\n")
+                link_profile(device, user)
+        
         if test:
             print("Starting test...\n")
         setup_worker(device, user, test)
     else:
+        # No profiles found and no PSN_TOKEN
         try:
             selection = input("No Profiles Found. Enter 'Y' to create profile.\n>> ")
         except (KeyboardInterrupt, EOFError):
@@ -235,12 +290,17 @@ def worker(device: RPDevice, user: str, event: threading.Event):
     atexit.register(loop.stop)
     loop.run_until_complete(task)
     
-    # Start PipeReader after session is ready
+    # Start PipeReader - it can open the pipe even if session isn't ready yet
+    # The pipe reader will wait for writers (VisionSensor) to connect
+    # Once session is ready, commands will be forwarded to controller
     pipe_reader = None
-    if device.session and device.session.is_ready:
+    if device.controller:
         pipe_reader = PipeReader(device.controller)
         pipe_reader.start()
         atexit.register(pipe_reader.stop)
+        _LOGGER.info("PipeReader started (will wait for pipe writer and session readiness)")
+    else:
+        _LOGGER.warning("Controller not available, PipeReader not started")
     
     try:
         loop.run_forever()

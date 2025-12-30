@@ -16,9 +16,11 @@ import sys
 import time
 import signal
 import logging
+import logging.handlers
 import threading
 import subprocess
 from typing import Optional
+from datetime import datetime
 
 # Import core components
 from core.gestures import GestureDetector
@@ -27,11 +29,48 @@ from core.vision_sensor import VisionSensor
 from web.server import init_app, run_server
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+def setup_logging():
+    """
+    Configure logging to both console and run.log file.
+    Aggregates all runs into run.log file.
+    """
+    log_file = 'run.log'
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+    
+    # Get root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers to avoid duplicates
+    root_logger.handlers.clear()
+    
+    # Create formatter
+    formatter = logging.Formatter(log_format, datefmt=date_format)
+    
+    # File handler - append mode to aggregate all runs
+    file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    
+    # Console handler - for terminal output
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    
+    # Add handlers to root logger
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    # Log session start
+    logger = logging.getLogger(__name__)
+    logger.info("=" * 80)
+    logger.info(f"NEW SESSION STARTED - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("=" * 80)
+
+
+# Setup logging first, before any other modules
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -79,7 +118,7 @@ class PlayAbleOrchestrator:
         try:
             if os.path.exists(self.pipe_path):
                 # Check if it's actually a FIFO
-                if not os.path.stat(self.pipe_path).st_mode & 0o010000:
+                if not os.stat(self.pipe_path).st_mode & 0o010000:
                     logger.warning(f"{self.pipe_path} exists but is not a FIFO, removing...")
                     os.remove(self.pipe_path)
                     os.mkfifo(self.pipe_path)
@@ -199,10 +238,13 @@ class PlayAbleOrchestrator:
         try:
             logger.info("Starting Vision Sensor thread...")
             
-            # Create VisionSensor instance
+            # Create VisionSensor instance with shared gesture detector and mapping
+            # This avoids opening the camera twice (camera is already open in gesture_detector)
             self.vision_sensor = VisionSensor(
                 pipe_path=self.pipe_path,
-                camera_index=self.camera_index
+                camera_index=self.camera_index,
+                gesture_detector=self.gesture_detector,
+                gesture_mapping=self.gesture_mapping
             )
             
             # Start in dedicated thread

@@ -30,12 +30,14 @@ class GestureDetector:
         self.camera.set(cv2.CAP_PROP_FPS, 30)
         
         # Initialize MediaPipe Pose
+        # Use model_complexity=0 for better performance on Raspberry Pi
+        # 0 = fastest, 1 = balanced, 2 = most accurate
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
         self.pose = self.mp_pose.Pose(
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
-            model_complexity=1  # Balance between accuracy and speed
+            model_complexity=0  # Use 0 for better performance on Raspberry Pi
         )
         
         # State tracking
@@ -102,20 +104,36 @@ class GestureDetector:
         """
         Get the current frame with pose overlay for dashboard visualization.
         
+        If no frame has been processed yet, reads a fresh frame from the camera.
+        
         Returns:
-            Frame with pose landmarks drawn, or None if no frame available
+            Frame with pose landmarks drawn, or None if camera is not available
         """
+        # If no frame has been processed yet, try to read one directly from camera
         if self.current_frame is None:
-            return None
+            if not self.camera or not self.camera.isOpened():
+                return None
+            # Read a fresh frame for the web feed
+            ret, frame = self.camera.read()
+            if not ret or frame is None:
+                return None
+            # Process it to get landmarks (but don't update previous_landmarks to avoid affecting gesture detection)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.pose.process(rgb_frame)
+            frame_to_use = frame.copy()
+            landmarks_to_use = results.pose_landmarks if results.pose_landmarks else None
+        else:
+            frame_to_use = self.current_frame.copy()
+            landmarks_to_use = self.current_landmarks
         
         # Create a copy to draw on
-        annotated_frame = self.current_frame.copy()
+        annotated_frame = frame_to_use.copy()
         
         # Draw pose landmarks if available
-        if self.current_landmarks:
+        if landmarks_to_use:
             self.mp_drawing.draw_landmarks(
                 annotated_frame,
-                self.current_landmarks,
+                landmarks_to_use,
                 self.mp_pose.POSE_CONNECTIONS,
                 landmark_drawing_spec=self.mp_drawing.DrawingSpec(
                     color=(0, 255, 0), thickness=2, circle_radius=2
@@ -197,7 +215,24 @@ class GestureDetector:
         # Process current frame
         landmarks = self.process_frame()
         if landmarks is None:
+            # No pose detected - this is normal if person not in frame
+            # Log occasionally to help debugging
+            if not hasattr(self, '_pose_detection_counter'):
+                self._pose_detection_counter = 0
+            self._pose_detection_counter += 1
+            if self._pose_detection_counter % 150 == 0:  # Log every 150 frames (~1 minute at 2.5 FPS)
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug("No pose detected in frame - make sure you're visible to the camera")
             return detected_events
+        
+        # Reset counter when pose is detected
+        if hasattr(self, '_pose_detection_counter'):
+            if self._pose_detection_counter > 0:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Pose detected! (after {self._pose_detection_counter} frames without detection)")
+            self._pose_detection_counter = 0
         
         # MediaPipe landmark indices
         LEFT_ELBOW = self.mp_pose.PoseLandmark.LEFT_ELBOW.value
@@ -252,19 +287,58 @@ class GestureDetector:
         shoulder = self.current_landmarks.landmark[shoulder_id]
         
         # Check if elbow is raised (Y decreases upward in image coordinates)
+        # Positive vertical_diff means elbow is above shoulder
         vertical_diff = shoulder.y - elbow.y
         
-        # Check delta if we have previous frame
+        # Check if elbow is currently raised (position check)
+        is_raised = vertical_diff > self.thresholds['raise_minimum']
+        
+        # If we have previous frame, also check for upward movement
         if self.previous_landmarks is not None:
             delta = self.calculate_landmark_delta(elbow_id)
             if delta:
-                delta_y = abs(delta[1])
-                # Must meet both speed and range requirements
-                return (delta_y > self.thresholds['delta_threshold'] and 
-                        vertical_diff > self.thresholds['raise_minimum'])
+                # delta[1] is negative when moving upward (Y decreases upward)
+                # So we want delta_y to be negative (moving up) OR already raised
+                delta_y = delta[1]  # Keep sign - negative means moving up
+                
+                # Check if moving upward (negative delta_y) with sufficient speed
+                moving_up = delta_y < -self.thresholds['delta_threshold']
+                
+                # Gesture detected if:
+                # 1. Elbow is currently raised above threshold, OR
+                # 2. Elbow is moving upward with sufficient speed
+                detected = is_raised or (moving_up and vertical_diff > 0)
+                
+                # Log diagnostic info occasionally (every 50 frames to help debugging)
+                if hasattr(self, '_debug_counter'):
+                    self._debug_counter += 1
+                else:
+                    self._debug_counter = 0
+                
+                if self._debug_counter % 50 == 0:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        f"Elbow raise: vertical_diff={vertical_diff:.3f} "
+                        f"(min={self.thresholds['raise_minimum']:.3f}), "
+                        f"delta_y={delta_y:.3f} (threshold={self.thresholds['delta_threshold']:.3f}), "
+                        f"is_raised={is_raised}, moving_up={moving_up}, detected={detected}"
+                    )
+                
+                return detected
         
-        # If no previous frame, just check position
-        return vertical_diff > self.thresholds['raise_minimum']
+        # If no previous frame, just check if currently raised
+        # Log first check to help debugging
+        if not hasattr(self, '_first_check_logged'):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Elbow raise (no previous frame): vertical_diff={vertical_diff:.3f} "
+                f"(threshold={self.thresholds['raise_minimum']:.3f}), detected={is_raised}"
+            )
+            self._first_check_logged = True
+        
+        return is_raised
     
     def _check_arm_forward(self, wrist_id: int) -> bool:
         """
@@ -291,9 +365,9 @@ class GestureDetector:
     
     def cleanup(self):
         """Release camera and MediaPipe resources."""
-        if self.camera:
+        if hasattr(self, 'camera') and self.camera:
             self.camera.release()
-        if self.pose:
+        if hasattr(self, 'pose') and self.pose:
             self.pose.close()
     
     def __del__(self):

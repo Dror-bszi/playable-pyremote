@@ -104,9 +104,15 @@ async function submitRedirect() {
 
 async function submitPin() {
     const pin = document.getElementById('pin-code').value.trim();
+    const ps5Host = document.getElementById('ps5-host-pin').value.trim();
     
     if (!pin || pin.length !== 8) {
         showMessage('psn-message', 'Please enter an 8-digit PIN', 'error');
+        return;
+    }
+    
+    if (!ps5Host) {
+        showMessage('psn-message', 'Please enter your PS5 IP address', 'error');
         return;
     }
     
@@ -116,7 +122,10 @@ async function submitPin() {
         const response = await fetch('/api/psn/pin', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pin: pin })
+            body: JSON.stringify({ 
+                pin: pin,
+                ps5_host: ps5Host 
+            })
         });
         
         const data = await response.json();
@@ -124,6 +133,8 @@ async function submitPin() {
         if (data.success) {
             document.getElementById('pin-section').classList.add('hidden');
             document.getElementById('connection-section').classList.remove('hidden');
+            // Pre-fill the connection PS5 host with the one used for registration
+            document.getElementById('ps5-host').value = ps5Host;
             showMessage('psn-message', 'Device registered! You can now connect to your PS5', 'success');
         } else {
             showMessage('psn-message', `Error: ${data.error}`, 'error');

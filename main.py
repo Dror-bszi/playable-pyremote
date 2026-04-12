@@ -542,6 +542,8 @@ class PlayAbleOrchestrator:
             try:
                 self.gesture_detector.cleanup()
                 logger.info("GestureDetector cleaned up")
+            except ValueError:
+                pass  # Already cleaned up by VisionSensor teardown
             except Exception as e:
                 logger.error(f"Error cleaning up GestureDetector: {e}", exc_info=True)
         

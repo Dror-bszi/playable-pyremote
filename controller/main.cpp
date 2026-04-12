@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
+#include <csignal>
 #include <string>
 #include <cmath>
 #include <thread>
@@ -12,6 +13,13 @@
 
 #define UPPER_THRESHOLD 32000
 #define LOWER_THRESHOLD 200
+
+// Global quit flag set by signal handler so the event loop exits cleanly
+static volatile sig_atomic_t g_quit = 0;
+
+static void signal_handler(int /*sig*/) {
+    g_quit = 1;
+}
 
 void sendPipeButton(const std::string& button, const std::string& pressOrRelease, int pipeID) {
     std::string message = button + "\n" + pressOrRelease + "\n\n";
@@ -32,7 +40,9 @@ const int JOYSTICK_DEAD_ZONE = 8000;
 
 int main() {
 
-    bool quit = false;
+    // Register signal handlers so SIGTERM/SIGINT exit the event loop cleanly
+    signal(SIGINT,  signal_handler);
+    signal(SIGTERM, signal_handler);
 
     SDL_Event e;
 
@@ -69,10 +79,11 @@ int main() {
 
     // OPEN PIPE — use O_NONBLOCK so we do not deadlock waiting for a reader.
     // Retry every 500ms until a reader (pyremoteplay) opens the other end.
+    // Also check g_quit so a signal during startup exits cleanly.
     const char* pipe_path = "/tmp/my_pipe";
     int fd = -1;
     std::cout << "Waiting for pipe reader..." << std::endl;
-    while (fd == -1) {
+    while (fd == -1 && !g_quit) {
         fd = open(pipe_path, O_WRONLY | O_NONBLOCK);
         if (fd == -1) {
             if (errno == ENXIO) {
@@ -85,9 +96,15 @@ int main() {
             }
         }
     }
+
+    if (g_quit) {
+        SDL_Quit();
+        return 0;
+    }
+
     std::cout << "Pipe opened. Listening for controller input..." << std::endl;
 
-    while (!quit) {
+    while (!g_quit) {
         while (SDL_PollEvent(&e) != 0) {
 
             switch (e.type) {

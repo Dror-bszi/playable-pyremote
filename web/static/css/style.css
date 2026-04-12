@@ -1,17 +1,12 @@
 /**
  * PlayAble Dashboard Styles
- * Responsive styling for rehabilitation controller dashboard
  */
 
-/* Reset and Base Styles */
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
+/* ── Reset & Base ─────────────────────────────────────────────────────────── */
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: #333;
     line-height: 1.6;
@@ -19,431 +14,255 @@ body {
     padding: 20px;
 }
 
-.container {
-    max-width: 1400px;
-    margin: 0 auto;
-}
+.container { max-width: 1400px; margin: 0 auto; }
 
-/* Header */
-header {
-    text-align: center;
-    color: white;
-    margin-bottom: 30px;
-}
+/* ── Header ──────────────────────────────────────────────────────────────── */
+header { text-align: center; color: white; margin-bottom: 30px; }
+header h1 { font-size: 2.5rem; margin-bottom: 8px; text-shadow: 2px 2px 4px rgba(0,0,0,.3); }
+.subtitle { font-size: 1.1rem; opacity: .9; }
 
-header h1 {
-    font-size: 2.5rem;
-    margin-bottom: 10px;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-}
-
-.subtitle {
-    font-size: 1.2rem;
-    opacity: 0.9;
-}
-
-/* Dashboard Grid */
+/* ── Grid ────────────────────────────────────────────────────────────────── */
 .dashboard-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
     gap: 20px;
 }
 
-/* Panel Styles */
+/* ── Panel ───────────────────────────────────────────────────────────────── */
 .panel {
     background: white;
     border-radius: 12px;
     padding: 25px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    transition: transform 0.2s, box-shadow 0.2s;
+    box-shadow: 0 4px 6px rgba(0,0,0,.1);
+    transition: transform .2s, box-shadow .2s;
 }
-
-.panel:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-}
-
+.panel:hover { transform: translateY(-2px); box-shadow: 0 6px 12px rgba(0,0,0,.15); }
 .panel h2 {
     color: #667eea;
-    margin-bottom: 20px;
-    font-size: 1.5rem;
+    margin-bottom: 18px;
+    font-size: 1.4rem;
     border-bottom: 2px solid #667eea;
     padding-bottom: 10px;
 }
+.panel h3 { color: #764ba2; margin: 18px 0 10px; font-size: 1.1rem; }
+.section-label { font-size: .85rem; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
 
-.panel h3 {
-    color: #764ba2;
-    margin: 20px 0 10px;
-    font-size: 1.2rem;
+/* ── PS5 Device Cards ─────────────────────────────────────────────────────── */
+.device-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 10px;
+    background: #fafafa;
 }
-
-/* PSN Connection Panel */
-.psn-status {
-    margin-bottom: 20px;
-}
-
-.status-indicator {
-    display: inline-block;
-    padding: 8px 16px;
-    background: #f44336;
-    color: white;
-    border-radius: 20px;
-    font-weight: 600;
-}
-
-.status-indicator.authenticated {
-    background: #4caf50;
-}
-
-.psn-controls {
+.device-info { margin-bottom: 10px; }
+.device-name { font-weight: 700; font-size: 1rem; color: #333; display: block; }
+.device-mac  { font-size: .78rem; color: #999; font-family: monospace; }
+.device-connect-row {
     display: flex;
-    flex-direction: column;
-    gap: 15px;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
-
-.url-input {
-    width: 100%;
-    padding: 10px;
+.device-ip-input {
+    flex: 1;
+    min-width: 130px;
+    padding: 7px 10px;
     border: 1px solid #ddd;
     border-radius: 6px;
-    font-size: 0.9rem;
-    background: #f5f5f5;
+    font-size: .9rem;
 }
-
-.info-text {
-    color: #666;
-    font-size: 0.9rem;
-    margin-bottom: 5px;
+.device-ip-input:focus { outline: none; border-color: #667eea; }
+.device-status-label {
+    font-size: .85rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
 }
+.device-status-label.connecting { background: #fff3e0; color: #e65100; }
+.device-status-label.connected  { background: #e8f5e9; color: #2e7d32; }
+.device-status-label.failed     { background: #ffebee; color: #b71c1c; }
 
-/* Status Panel */
-.status-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 15px;
+/* ── PSN Auth Controls ───────────────────────────────────────────────────── */
+.psn-controls { display: flex; flex-direction: column; gap: 12px; }
+.url-input {
+    width: 100%; padding: 9px;
+    border: 1px solid #ddd; border-radius: 6px;
+    font-size: .85rem; background: #f5f5f5;
 }
+.info-text { color: #666; font-size: .88rem; margin-bottom: 4px; }
 
+/* ── Status Panel ────────────────────────────────────────────────────────── */
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .status-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px;
-    background: #f8f9fa;
-    border-radius: 8px;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 11px 14px; background: #f8f9fa; border-radius: 8px;
     border-left: 4px solid #667eea;
 }
+.status-label { font-weight: 600; color: #555; font-size: .9rem; }
+.status-value { font-size: 1.1rem; cursor: default; }
 
-.status-label {
-    font-weight: 600;
-    color: #555;
-}
-
-.status-value {
-    font-size: 1.2rem;
-}
-
-/* Video Panel */
-.video-panel {
-    grid-column: span 2;
-}
-
-.video-container {
-    position: relative;
-    width: 100%;
-    background: #000;
-    border-radius: 8px;
-    overflow: hidden;
-}
-
-#video-feed {
-    width: 100%;
-    height: auto;
-    display: block;
-}
-
-.gesture-indicator {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    background: rgba(76, 175, 80, 0.9);
-    color: white;
-    padding: 15px 25px;
-    border-radius: 8px;
-    font-weight: 600;
-    font-size: 1.1rem;
-    animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
-}
-
-/* Threshold Controls */
-.threshold-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-}
-
-.control-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.control-group label {
-    font-weight: 600;
-    color: #555;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.control-group label span {
-    color: #667eea;
-    font-size: 1.1rem;
-}
-
-input[type="range"] {
-    width: 100%;
-    height: 8px;
-    border-radius: 5px;
-    background: #ddd;
-    outline: none;
-    -webkit-appearance: none;
-}
-
-input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #667eea;
-    cursor: pointer;
-}
-
-input[type="range"]::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #667eea;
-    cursor: pointer;
-    border: none;
-}
-
-.range-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.85rem;
-    color: #999;
-}
-
-/* Gesture Mapping */
-.mapping-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
+/* ── Controller Panel ────────────────────────────────────────────────────── */
+.controller-status-row {
+    display: flex; align-items: center; gap: 12px;
     margin-bottom: 20px;
 }
-
-select {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    font-size: 1rem;
-    background: white;
-    cursor: pointer;
+.status-badge {
+    display: inline-block;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: .9rem;
 }
+.status-badge.connected    { background: #e8f5e9; color: #2e7d32; border: 2px solid #4caf50; }
+.status-badge.disconnected { background: #fafafa; color: #999;     border: 2px solid #ddd; }
+.controller-name { font-size: .85rem; color: #555; }
 
-select:focus {
-    outline: none;
-    border-color: #667eea;
+/* ── Bluetooth Section ───────────────────────────────────────────────────── */
+.bt-section { margin-top: 4px; }
+.bt-controls { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+.scan-label  { font-size: .85rem; color: #667eea; font-weight: 600; }
+
+/* Spinner */
+.spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid #ddd;
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
 }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-.active-mappings ul {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.mapping-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px;
-    background: #f8f9fa;
+/* BT device rows */
+.bt-devices-list {
+    margin-top: 10px;
+    border: 1px solid #e8e8e8;
     border-radius: 8px;
+    overflow: hidden;
+    max-height: 220px;
+    overflow-y: auto;
+}
+.bt-device-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #f0f0f0;
+    flex-wrap: wrap;
+}
+.bt-device-row:last-child { border-bottom: none; }
+.bt-device-info { flex: 1; }
+.bt-device-name { font-weight: 600; font-size: .9rem; display: block; color: #333; }
+.bt-device-mac  { font-size: .76rem; color: #aaa; font-family: monospace; }
+.bt-pair-status {
+    font-size: .82rem; font-weight: 600; padding: 2px 8px; border-radius: 4px;
+}
+.bt-pair-status.pairing { background: #e3f2fd; color: #1565c0; }
+.bt-pair-status.paired  { background: #e8f5e9; color: #2e7d32; }
+.bt-pair-status.failed  { background: #ffebee; color: #b71c1c; }
+
+/* ── Video Feed ──────────────────────────────────────────────────────────── */
+.video-panel { grid-column: span 2; }
+.video-container { position: relative; width: 100%; background: #000; border-radius: 8px; overflow: hidden; }
+#video-feed { width: 100%; height: auto; display: block; }
+.gesture-indicator {
+    position: absolute; top: 20px; right: 20px;
+    background: rgba(76,175,80,.9); color: white;
+    padding: 14px 22px; border-radius: 8px;
+    font-weight: 600; font-size: 1rem;
+    animation: pulse 1s infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .7; } }
+
+/* ── Threshold Controls ──────────────────────────────────────────────────── */
+.threshold-controls { display: flex; flex-direction: column; gap: 18px; }
+.control-group { display: flex; flex-direction: column; gap: 6px; }
+.control-group label {
+    font-weight: 600; color: #555;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.control-group label span { color: #667eea; font-size: 1.05rem; }
+input[type="range"] {
+    width: 100%; height: 7px; border-radius: 5px;
+    background: #ddd; outline: none; -webkit-appearance: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px;
+    border-radius: 50%; background: #667eea; cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: #667eea; cursor: pointer; border: none;
+}
+.range-labels { display: flex; justify-content: space-between; font-size: .82rem; color: #bbb; }
+
+/* ── Gesture Mappings ────────────────────────────────────────────────────── */
+.mapping-controls { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+select {
+    width: 100%; padding: 9px;
+    border: 1px solid #ddd; border-radius: 6px;
+    font-size: .95rem; background: white; cursor: pointer;
+}
+select:focus { outline: none; border-color: #667eea; }
+.active-mappings ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.mapping-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px; background: #f8f9fa; border-radius: 8px;
     border-left: 4px solid #764ba2;
 }
+.mapping-text { font-weight: 500; color: #555; }
+.no-mappings  { text-align: center; color: #aaa; padding: 18px; font-style: italic; }
 
-.mapping-text {
-    font-weight: 500;
-    color: #555;
-}
-
-.no-mappings {
-    text-align: center;
-    color: #999;
-    padding: 20px;
-    font-style: italic;
-}
-
-/* Buttons */
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
 .btn {
-    padding: 12px 24px;
-    border: none;
-    border-radius: 6px;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: center;
+    padding: 11px 22px; border: none; border-radius: 6px;
+    font-size: .95rem; font-weight: 600; cursor: pointer;
+    transition: all .15s; text-align: center; white-space: nowrap;
 }
+.btn:hover   { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,.15); }
+.btn:active  { transform: translateY(0); }
+.btn:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-sm      { padding: 7px 14px; font-size: .85rem; }
+.btn-primary   { background: #667eea; color: white; }
+.btn-primary:hover   { background: #5568d3; }
+.btn-secondary { background: #6c757d; color: white; }
+.btn-secondary:hover { background: #5a6268; }
+.btn-success   { background: #4caf50; color: white; }
+.btn-success:hover   { background: #45a049; }
+.btn-danger    { background: #f44336; color: white; }
+.btn-danger:hover    { background: #da190b; }
+.btn-small     { padding: 5px 11px; font-size: .82rem; }
 
-.btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-}
-
-.btn:active {
-    transform: translateY(0);
-}
-
-.btn-primary {
-    background: #667eea;
-    color: white;
-}
-
-.btn-primary:hover {
-    background: #5568d3;
-}
-
-.btn-secondary {
-    background: #6c757d;
-    color: white;
-}
-
-.btn-secondary:hover {
-    background: #5a6268;
-}
-
-.btn-success {
-    background: #4caf50;
-    color: white;
-}
-
-.btn-success:hover {
-    background: #45a049;
-}
-
-.btn-danger {
-    background: #f44336;
-    color: white;
-}
-
-.btn-danger:hover {
-    background: #da190b;
-}
-
-.btn-small {
-    padding: 6px 12px;
-    font-size: 0.85rem;
-}
-
-/* Input Fields */
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
 input[type="text"] {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    font-size: 1rem;
+    width: 100%; padding: 9px 11px;
+    border: 1px solid #ddd; border-radius: 6px; font-size: .95rem;
 }
-
 input[type="text"]:focus {
-    outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    outline: none; border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102,126,234,.12);
 }
 
-/* Messages */
-.message {
-    padding: 12px;
-    border-radius: 6px;
-    margin-top: 15px;
-    font-weight: 500;
-}
+/* ── Messages ────────────────────────────────────────────────────────────── */
+.message { padding: 11px 14px; border-radius: 6px; margin-top: 12px; font-weight: 500; font-size: .9rem; }
+.message.info    { background: #e3f2fd; color: #1565c0; border-left: 4px solid #1565c0; }
+.message.success { background: #e8f5e9; color: #2e7d32; border-left: 4px solid #2e7d32; }
+.message.error   { background: #ffebee; color: #b71c1c; border-left: 4px solid #b71c1c; }
 
-.message.info {
-    background: #e3f2fd;
-    color: #1976d2;
-    border-left: 4px solid #1976d2;
-}
+/* ── Utility ─────────────────────────────────────────────────────────────── */
+.hidden { display: none !important; }
 
-.message.success {
-    background: #e8f5e9;
-    color: #388e3c;
-    border-left: 4px solid #388e3c;
-}
-
-.message.error {
-    background: #ffebee;
-    color: #c62828;
-    border-left: 4px solid #c62828;
-}
-
-/* Utility Classes */
-.hidden {
-    display: none !important;
-}
-
-/* Responsive Design */
-@media (max-width: 1200px) {
-    .video-panel {
-        grid-column: span 1;
-    }
-}
-
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 1200px) { .video-panel { grid-column: span 1; } }
 @media (max-width: 768px) {
-    .dashboard-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    header h1 {
-        font-size: 2rem;
-    }
-    
-    .subtitle {
-        font-size: 1rem;
-    }
-    
-    .panel {
-        padding: 20px;
-    }
-    
-    .status-grid {
-        grid-template-columns: 1fr;
-    }
+    .dashboard-grid { grid-template-columns: 1fr; }
+    header h1 { font-size: 2rem; }
+    .panel { padding: 18px; }
+    .status-grid { grid-template-columns: 1fr; }
+    .device-connect-row { flex-direction: column; align-items: stretch; }
 }
-
 @media (max-width: 480px) {
-    body {
-        padding: 10px;
-    }
-    
-    header h1 {
-        font-size: 1.5rem;
-    }
-    
-    .panel {
-        padding: 15px;
-    }
-    
-    .btn {
-        padding: 10px 20px;
-        font-size: 0.9rem;
-    }
+    body { padding: 10px; }
+    header h1 { font-size: 1.5rem; }
+    .panel { padding: 14px; }
+    .btn { padding: 9px 18px; font-size: .88rem; }
 }

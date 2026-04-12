@@ -42,6 +42,7 @@ On first connection, do the following in order:
 8. Check if the named pipe exists:
    `ls -l /tmp/my_pipe`
    If not: `mkfifo /tmp/my_pipe && chmod 666 /tmp/my_pipe`
+9. Apply Bluetooth system config if not already done (see Bluetooth Setup section)
 
 ## Repository
 - **GitHub:** https://github.com/Dror-bszi/playable-pyremote
@@ -51,16 +52,16 @@ On first connection, do the following in order:
 ## Tech Stack
 - **Vision:** Python + MediaPipe + OpenCV (pose detection)
 - **Controller input:** C++ + SDL2 (Hardware Producer, captures DualSense)
-- **PS5 connection:** pyremoteplay (Remote Play protocol)
+- **PS5 connection:** pyremoteplay (Remote Play protocol, in-process library)
 - **Web dashboard:** Flask
 - **IPC:** Named pipe at /tmp/my_pipe
-- **Hardware:** Raspberry Pi 5, USB/Pi Camera, DualSense controller
+- **Hardware:** Raspberry Pi 5, USB/Pi Camera, DualSense controller (Bluetooth)
 
 ## Architecture
 Four components communicating via named pipe:
-1. Hardware Producer (C++) — reads DualSense input
-2. Vision Sensor (Python) — detects gestures via camera
-3. Remote Play Client (pyremoteplay) — sends input to PS5
+1. Hardware Producer (C++) — reads DualSense input via SDL2, writes to pipe
+2. Vision Sensor (Python) — detects gestures via camera, writes to pipe
+3. Remote Play Client (pyremoteplay) — PipeReader reads pipe, forwards to PS5
 4. Web Dashboard (Flask) — therapist UI for config and monitoring
 
 ## Project Structure
@@ -75,13 +76,19 @@ playable/
 │   ├── gestures.py     # MediaPipe gesture detection
 │   ├── mappings.py     # Gesture mapping configuration
 │   └── vision_sensor.py
-├── pyremoteplay/       # Remote Play client library
+├── pyremoteplay/       # Remote Play client library (in-repo fork)
+│   └── pipe_reader.py  # Reads named pipe, forwards to Controller API
 ├── web/                # Web Dashboard (Flask)
-│   ├── server.py
+│   ├── server.py       # All API endpoints + PSNConnectionManager
 │   ├── templates/
+│   │   └── dashboard.html
 │   └── static/
+│       ├── css/style.css
+│       └── js/dashboard.js
 ├── config/
-│   └── mappings.json
+│   ├── mappings.json
+│   ├── psn_tokens.json     # PSN OAuth tokens (online_id, credentials)
+│   └── ps5_config.json     # last_host IP for reconnect convenience
 ├── main.py
 ├── requirements.txt
 └── install.sh
@@ -97,24 +104,87 @@ playable/
 - Build: `cd controller && mkdir -p build && cd build && cmake .. && make`
 - Requires: `libsdl2-dev`, `cmake`, `build-essential`
 - Does NOT require a display (SDL_INIT_VIDEO removed — headless safe)
-- Pipe open is non-blocking (O_NONBLOCK): retries every 500ms until a reader
-  connects, so startup order with pyremoteplay does not matter
+- Pipe open is non-blocking (O_NONBLOCK): retries every 500ms until a reader connects
+- Handles SIGTERM/SIGINT via signal handler — exits event loop cleanly without force-kill
+- Pipe message format: buttons = `BUTTON_NAME\npress|release\n\n`, analog = `STICK\naxis\nvalue\n`
 
-## Current Status (update at end of each session)
-- **Last worked on:** 2026-04-12
+## Bluetooth Setup (system config — NOT in git, must be applied on fresh install)
+
+### Required changes to /etc/bluetooth/input.conf
+Two lines must be set (uncomment and change default):
+```
+UserspaceHID=true
+ClassicBondedOnly=false
+```
+Then: `sudo systemctl restart bluetooth`
+
+**Why UserspaceHID=true**: Routes BT HID through UHID instead of the old HIDP
+kernel socket. UHID creates a proper HID bus device, `hid-playstation` binds to it
+(alias hid:b0005g*v0000054Cp00000CE6), and `/dev/input/event*` nodes appear for SDL2.
+
+**Why ClassicBondedOnly=false**: Allows the input profile to accept HID connections
+during the pairing process before the bond is fully established.
+
+### DualSense pairing procedure
+Must be done in ONE bluetoothctl session so the agent handles the
+"Authorize service" prompt that appears after pairing:
+
+```bash
+bluetoothctl remove BC:C7:46:7D:51:0D 2>/dev/null; true
+# Put DualSense in pairing mode (PS + Create, rapid flash), then:
+{ echo "agent NoInputNoOutput"; echo "default-agent"; sleep 1
+  echo "scan on"; sleep 8; echo "scan off"
+  echo "pair BC:C7:46:7D:51:0D"; sleep 10
+  echo "trust BC:C7:46:7D:51:0D"; sleep 1
+  echo "connect BC:C7:46:7D:51:0D"; sleep 8; echo "quit"
+} | bluetoothctl
+```
+
+Verify success: `bluetoothctl info BC:C7:46:7D:51:0D` should show
+`Bonded: yes`, `Trusted: yes`, `Connected: yes`.
+Also check: `ls /dev/input/event5` and `cat /proc/bus/input/devices | grep DualSense`
+
+### After a reboot
+Press PS button on the controller — it auto-reconnects (bonded + trusted).
+No re-pairing needed unless the device is explicitly removed.
+
+**DualSense MAC:** BC:C7:46:7D:51:0D
+
+## PSN Authentication
+- Tokens stored in `config/psn_tokens.json` (online_id, credentials, expiration)
+- Tokens expire — re-authenticate via the dashboard PSN Auth panel if needed
+- The dashboard shows a re-auth link; follow it, copy the redirect URL back in
+
+## Current Status
+- **Last worked on:** 2026-04-13
 - **Last completed:**
   - Initial setup: repo cloned, venv created, all Python deps installed
-  - Named pipe created at /tmp/my_pipe
-  - C++ Hardware Producer compiled (controller/build/detect_controller)
-  - Fixed: removed SDL_INIT_VIDEO — binary now runs headless without a display
-  - Fixed: pipe open is now non-blocking (O_NONBLOCK + ENXIO retry loop)
-  - Fixed: write errors in sendPipeButton/sendPipeAnalog handle EAGAIN silently
-- **Next task:** End-to-end smoke test — start main.py and verify Vision Sensor
-  and Web Dashboard launch without errors (Hardware Producer will wait for pipe
-  reader; no PS5 connection needed for this test)
+  - Named pipe at /tmp/my_pipe, Hardware Producer compiled and running headless
+  - pyremoteplay integrated as in-process library (not subprocess)
+  - Web dashboard full overhaul: PS5 device panel, real controller status,
+    Bluetooth pairing UI, PSN auth panel, live status polling
+  - Dashboard: PSN username (online_id) shown on PS5 device cards
+  - Dashboard: Paired Controllers section with per-device Connect button
+  - Fixed: controller status detection uses bluetoothctl BT fallback when
+    /proc/bus/input/devices misses BT HID devices (HIDP path)
+  - Fixed: DualSense BT full chain — UserspaceHID=true + ClassicBondedOnly=false
+    + clean re-pair with persistent bonding. hid-playstation binds over BT via
+    UHID, /dev/input/event5 (js0) created, SDL2 hotplug detects it
+  - End-to-end chain verified with strace: DualSense BT → SDL2 → /tmp/my_pipe
+    → PipeReader → pyremoteplay Controller API → PS5 button presses confirmed
+  - Smoke test: all components launch cleanly, graceful shutdown
+  - Web dashboard: live at http://192.168.0.145:5000
+- **Next task:** Gesture/vision testing — verify body movements (MediaPipe pose
+  detection) correctly trigger mapped PS5 buttons end-to-end
 - **Known issues:**
   - SDL_CONTROLLERDEVICEADDED/REMOVED events are nested inside the
-    SDL_CONTROLLERAXISMOTION case in main.cpp — hot-plugging won't work
-    (pre-existing bug, not yet fixed)
+    SDL_CONTROLLERAXISMOTION case in main.cpp — hot-plugging may not work
+    (pre-existing bug, not yet fixed; workaround: restart main.py)
   - pyremoteplay is started via the web dashboard UI, not by main.py —
-    the Hardware Producer will loop waiting for a pipe reader until it is started
+    pipe writers loop waiting for a reader until pyremoteplay connects
+  - Vision Sensor FPS is ~10-20 (target 30+) — camera performance issue,
+    not yet investigated
+  - Flask dev server thread does not stop cleanly within 5s timeout on
+    shutdown (logs a warning, exits eventually)
+  - pyremoteplay logs ~10 "Version not accepted" protobuf errors during
+    session negotiation — pre-existing, does not prevent READY state

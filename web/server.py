@@ -483,7 +483,7 @@ def get_status():
         if gesture_mapping:
             status['active_mappings'] = gesture_mapping.get_active_mappings()
 
-        # Real controller detection
+        # Real controller detection — check /proc first (USB), fall back to bluetoothctl (BT)
         try:
             proc = subprocess.run(
                 ['cat', '/proc/bus/input/devices'],
@@ -499,7 +499,14 @@ def get_status():
                             status['controller_name'] = name
                             break
         except Exception:
-            status['controller_connected'] = os.path.exists('/tmp/my_pipe')
+            pass
+
+        # BT fallback: if not found via /proc, query bluetoothctl
+        if not status['controller_connected']:
+            bt_conn, bt_name = _bt_dualsense_connected()
+            if bt_conn:
+                status['controller_connected'] = True
+                status['controller_name'] = bt_name
 
         return jsonify(status)
     except Exception as e:
@@ -570,10 +577,14 @@ def get_controller_status():
                     name = m.group(1)
                     if 'Motion' not in name and 'Touchpad' not in name:
                         return jsonify({'connected': True, 'name': name})
-        return jsonify({'connected': False, 'name': None})
     except Exception as e:
         logger.error(f"Controller status error: {e}")
-        return jsonify({'connected': False, 'name': None})
+
+    # BT fallback
+    bt_conn, bt_name = _bt_dualsense_connected()
+    if bt_conn:
+        return jsonify({'connected': True, 'name': bt_name})
+    return jsonify({'connected': False, 'name': None})
 
 
 # ── Bluetooth ────────────────────────────────────────────────────────────────
@@ -662,6 +673,28 @@ def bluetooth_connect():
         return jsonify({'success': False, 'error': 'Connection timed out'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+
+
+def _bt_dualsense_connected():
+    """Return (connected, name) for the first BT-connected DualSense/Wireless Controller."""
+    try:
+        r = subprocess.run(['bluetoothctl', 'devices'], capture_output=True, text=True, timeout=5)
+        for line in r.stdout.splitlines():
+            clean = _ANSI_ESCAPE.sub('', line).strip()
+            m = re.match(r'Device\s+([0-9A-Fa-f:]{17})\s+(.*)', clean)
+            if m:
+                mac, name = m.group(1), m.group(2).strip()
+                if 'DualSense' in name or 'Wireless Controller' in name:
+                    info = subprocess.run(
+                        ['bluetoothctl', 'info', mac],
+                        capture_output=True, text=True, timeout=3,
+                    )
+                    if 'Connected: yes' in info.stdout:
+                        return True, name
+    except Exception:
+        pass
+    return False, None
 
 
 # ── PSN Auth ─────────────────────────────────────────────────────────────────

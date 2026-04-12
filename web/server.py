@@ -217,6 +217,7 @@ class PSNConnectionManager:
                 if not user:
                     raise ValueError("No online_id in tokens")
 
+                # Connect to device and fetch status (needed for mac_address / profile lookup)
                 device = RPDevice(ps5_host)
                 status = device.get_status()
                 if not status:
@@ -224,6 +225,7 @@ class PSNConnectionManager:
                 if status.get("status-code") != 200:
                     raise RuntimeError(f"PS5 is not ready (status-code: {status.get('status-code')})")
 
+                # Verify user is registered with this device
                 registered_users = device.get_users()
                 if user not in registered_users:
                     raise RuntimeError(
@@ -231,6 +233,7 @@ class PSNConnectionManager:
                         "Complete device registration first."
                     )
 
+                # Create session — no AV receiver, controller input only
                 loop = asyncio.new_event_loop()
                 device.create_session(user, loop=loop)
                 ready_event = threading.Event()
@@ -264,6 +267,7 @@ class PSNConnectionManager:
                 )
                 self._session_thread.start()
 
+                # Block up to 10 s for session to reach READY
                 ready_event.wait(timeout=10)
 
                 if device.session and device.session.is_ready:
@@ -271,10 +275,9 @@ class PSNConnectionManager:
                     self._session_loop = loop
                     self.is_connected = True
                     logger.info(f"Remote Play session READY (PS5: {ps5_host}, user: {user})")
-                    # Save PS5 host for future use
-                    _save_ps5_config({'last_host': ps5_host})
                     return True
 
+                # Did not become ready — clean up
                 loop.call_soon_threadsafe(loop.stop)
                 error = device.session.error if device.session else "unknown error"
                 raise RuntimeError(f"Remote Play session failed to reach READY state: {error}")
@@ -534,11 +537,16 @@ def get_ps5_devices():
 
         ps5_config = _load_ps5_config()
 
+        username = None
+        if psn_connection_manager and psn_connection_manager.tokens:
+            username = psn_connection_manager.tokens.get('online_id')
+
         return jsonify({
             'devices': devices,
             'last_host': ps5_config.get('last_host'),
             'has_credentials': _check_tokens_valid(),
             'authenticated': psn_connection_manager.is_authenticated if psn_connection_manager else False,
+            'username': username,
         })
     except Exception as e:
         logger.error(f"Get PS5 devices error: {e}")
@@ -606,6 +614,54 @@ def bluetooth_pair():
     results = bluetooth_manager.pair_device(mac)
     success = results.get('pair') and results.get('trust')
     return jsonify({'success': success, 'results': results})
+
+
+@app.route('/api/bluetooth/paired')
+def bluetooth_paired():
+    """Return paired DualSense controllers with per-device connection status."""
+    try:
+        result = subprocess.run(
+            ['bluetoothctl', 'devices'],
+            capture_output=True, text=True, timeout=5,
+        )
+        devices = []
+        for line in result.stdout.splitlines():
+            clean = _ANSI_ESCAPE.sub('', line).strip()
+            m = re.match(r'Device\s+([0-9A-Fa-f:]{17})\s+(.*)', clean)
+            if m:
+                mac, name = m.group(1), m.group(2).strip()
+                if 'DualSense' in name or 'Wireless Controller' in name:
+                    info = subprocess.run(
+                        ['bluetoothctl', 'info', mac],
+                        capture_output=True, text=True, timeout=3,
+                    )
+                    connected = 'Connected: yes' in info.stdout
+                    devices.append({'mac': mac, 'name': name, 'connected': connected})
+        return jsonify({'devices': devices})
+    except Exception as e:
+        logger.error(f"Bluetooth paired error: {e}")
+        return jsonify({'devices': [], 'error': str(e)})
+
+
+@app.route('/api/bluetooth/connect', methods=['POST'])
+def bluetooth_connect():
+    """Connect to an already-paired Bluetooth device."""
+    data = request.get_json() or {}
+    mac = data.get('mac', '').strip()
+    if not mac or not re.match(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$', mac):
+        return jsonify({'error': 'Invalid MAC address'}), 400
+    try:
+        r = subprocess.run(
+            ['bluetoothctl', 'connect', mac],
+            capture_output=True, text=True, timeout=15,
+        )
+        success = r.returncode == 0
+        logger.info(f"bluetoothctl connect {mac}: rc={r.returncode}")
+        return jsonify({'success': success})
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'Connection timed out'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 
 # ── PSN Auth ─────────────────────────────────────────────────────────────────

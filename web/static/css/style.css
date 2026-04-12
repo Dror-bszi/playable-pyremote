@@ -266,3 +266,9 @@ input[type="text"]:focus {
     .panel { padding: 14px; }
     .btn { padding: 9px 18px; font-size: .88rem; }
 }
+
+/* ── Username on device card ─────────────────────────────────────────────── */
+.device-username { font-size: .78rem; color: #999; font-weight: 400; margin-left: 2px; }
+
+/* ── Paired controller cards ─────────────────────────────────────────────── */
+.paired-ctrl-card { border-left: 3px solid #667eea; }

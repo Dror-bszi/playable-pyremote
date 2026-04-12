@@ -10,6 +10,7 @@ let ps5Connected = false;
 document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
     loadPS5Devices();
+    loadPairedControllers();
     startStatusPolling();
     loadMappings();
     loadThresholds();
@@ -62,7 +63,7 @@ async function loadPS5Devices() {
             // Show saved devices
             list.innerHTML = '';
             data.devices.forEach(device => {
-                const card = buildDeviceCard(device, data.last_host);
+                const card = buildDeviceCard(device, data.last_host, data.username);
                 list.appendChild(card);
             });
             savedSection.classList.remove('hidden');
@@ -77,14 +78,14 @@ async function loadPS5Devices() {
     }
 }
 
-function buildDeviceCard(device, lastHost) {
+function buildDeviceCard(device, lastHost, username) {
     const card = document.createElement('div');
     card.className = 'device-card';
     card.dataset.mac = device.mac;
 
     card.innerHTML = `
         <div class="device-info">
-            <span class="device-name">${escHtml(device.nickname)}</span>
+            <span class="device-name">${escHtml(device.nickname)}${username ? '<span class="device-username"> · ' + escHtml(username) + '</span>' : ''}</span>
             <span class="device-mac">${escHtml(device.mac)}</span>
         </div>
         <div class="device-connect-row">
@@ -245,6 +246,84 @@ async function submitPin() {
         }
     } catch (err) {
         showMessage('psn-message', `Failed: ${err.message}`, 'error');
+    }
+}
+
+// ── Paired Controllers ───────────────────────────────────────────────────
+async function loadPairedControllers() {
+    const list = document.getElementById('paired-controllers-list');
+    try {
+        const res  = await fetch('/api/bluetooth/paired');
+        const data = await res.json();
+        list.innerHTML = '';
+        if (!data.devices || data.devices.length === 0) {
+            list.innerHTML = '<p class="info-text">No paired DualSense controllers found.</p>';
+            return;
+        }
+        data.devices.forEach(dev => list.appendChild(buildPairedControllerCard(dev)));
+    } catch (err) {
+        list.innerHTML = '<p class="info-text">Could not load paired devices.</p>';
+        console.error('loadPairedControllers error:', err);
+    }
+}
+
+function buildPairedControllerCard(dev) {
+    const card = document.createElement('div');
+    card.className = 'device-card paired-ctrl-card';
+    card.dataset.mac = dev.mac;
+    const nameEl = document.createElement('span');
+    nameEl.className = 'device-name';
+    nameEl.textContent = dev.name;
+    const macEl = document.createElement('span');
+    macEl.className = 'device-mac';
+    macEl.textContent = dev.mac;
+    const infoDiv = document.createElement('div');
+    infoDiv.className = 'device-info';
+    infoDiv.appendChild(nameEl);
+    infoDiv.appendChild(macEl);
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-success btn-sm btn-ctrl-connect' + (dev.connected ? ' hidden' : '');
+    btn.textContent = 'Connect';
+    const statusSpan = document.createElement('span');
+    statusSpan.className = 'device-status-label' + (dev.connected ? ' connected' : '');
+    statusSpan.textContent = dev.connected ? 'Connected' : '';
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'device-connect-row';
+    rowDiv.appendChild(btn);
+    rowDiv.appendChild(statusSpan);
+    card.appendChild(infoDiv);
+    card.appendChild(rowDiv);
+    btn.addEventListener('click', () => connectPairedController(dev.mac, card));
+    return card;
+}
+
+async function connectPairedController(mac, card) {
+    const btn    = card.querySelector('.btn-ctrl-connect');
+    const status = card.querySelector('.device-status-label');
+    btn.disabled       = true;
+    status.textContent = 'Connecting…';
+    status.className   = 'device-status-label connecting';
+    try {
+        const res  = await fetch('/api/bluetooth/connect', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            status.textContent = 'Connected';
+            status.className   = 'device-status-label connected';
+            btn.classList.add('hidden');
+        } else {
+            status.textContent = 'Failed';
+            status.className   = 'device-status-label failed';
+            btn.disabled       = false;
+            showMessage('bt-message', 'Connect failed: ' + (data.error || 'unknown error'), 'error');
+        }
+    } catch (err) {
+        status.textContent = 'Error';
+        status.className   = 'device-status-label failed';
+        btn.disabled       = false;
+        showMessage('bt-message', 'Error: ' + err.message, 'error');
     }
 }
 
@@ -411,6 +490,21 @@ async function updateStatus() {
             badge.className   = 'status-badge disconnected';
             nameLabel.textContent = '';
         }
+
+        // Sync paired controller card badges with live OS connection state
+        document.querySelectorAll('.paired-ctrl-card').forEach(card => {
+            const btn    = card.querySelector('.btn-ctrl-connect');
+            const slabel = card.querySelector('.device-status-label');
+            if (status.controller_connected) {
+                slabel.textContent = 'Connected';
+                slabel.className   = 'device-status-label connected';
+                if (btn) btn.classList.add('hidden');
+            } else if (slabel.textContent === 'Connected') {
+                slabel.textContent = '';
+                slabel.className   = 'device-status-label';
+                if (btn) { btn.classList.remove('hidden'); btn.disabled = false; }
+            }
+        });
 
         // Sync PS5 device card disconnect button visibility
         if (ps5Connected && !status.ps5_connected) {

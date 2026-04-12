@@ -4,6 +4,6 @@
     "raise_minimum": 0.1
   },
   "mappings": {
-    "left_elbow_raise": "CIRCLE"
+    "left_elbow_raise": "CROSS"
   }
 }

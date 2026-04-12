@@ -13,6 +13,7 @@ import os
 import json
 import logging
 import subprocess
+import asyncio
 import threading
 import time
 from typing import Optional, Dict, Any
@@ -25,6 +26,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.gestures import GestureDetector
 from core.mappings import GestureMapping
+from pyremoteplay.device import RPDevice
+from pyremoteplay.pipe_reader import PipeReader
 
 # Configure logging (if not already configured by main)
 # Only configure if root logger has no handlers
@@ -51,7 +54,10 @@ class PSNConnectionManager:
     def __init__(self, config_file='config/psn_tokens.json'):
         self.config_file = config_file
         self.tokens = self._load_tokens()
-        self.remoteplay_process: Optional[subprocess.Popen] = None
+        self.device: Optional[RPDevice] = None
+        self._session_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._session_thread: Optional[threading.Thread] = None
+        self._pipe_reader = None
         self.is_authenticated = self.tokens is not None
         self.is_connected = False
         self._lock = threading.Lock()
@@ -181,78 +187,87 @@ class PSNConnectionManager:
             raise
     
     def start_remoteplay(self, ps5_host: str = None) -> bool:
-        """
-        Start pyremoteplay subprocess with error handling.
-        """
+        """Start a persistent headless Remote Play session using pyremoteplay as a library."""
         with self._lock:
-            if self.remoteplay_process and self.remoteplay_process.poll() is None:
+            if self.device and self.device.connected:
                 logger.warning("Remote Play already running")
                 return False
-            
+
             try:
                 if not self.tokens:
                     raise ValueError("No authentication tokens available. Please authenticate first.")
-                
-                # Build command
-                # Use -t flag to enable test mode (DEBUG logging) so we can see PipeReader logs
-                cmd = ['python', '-m', 'pyremoteplay', '-t']
-                if ps5_host:
-                    cmd.append(ps5_host)
-                
-                # Set environment with tokens
-                env = os.environ.copy()
-                env['PSN_TOKEN'] = json.dumps(self.tokens)
-                
-                # Start subprocess
-                self.remoteplay_process = subprocess.Popen(
-                    cmd,
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,  # Merge stderr into stdout
-                    text=True,  # Text mode for easier reading
-                    bufsize=1  # Line buffered
-                )
-                
-                # Start thread to read subprocess output and log it
-                def log_subprocess_output(pipe, prefix="[pyremoteplay]"):
-                    """Read subprocess output line by line and log it."""
+                if not ps5_host:
+                    raise ValueError("ps5_host is required")
+
+                user = self.tokens.get("online_id")
+                if not user:
+                    raise ValueError("No online_id in tokens")
+
+                # Connect to device and fetch status (needed for mac_address / profile lookup)
+                device = RPDevice(ps5_host)
+                status = device.get_status()
+                if not status:
+                    raise RuntimeError(f"Could not reach PS5 at {ps5_host}")
+                if status.get("status-code") != 200:
+                    raise RuntimeError(f"PS5 is not ready (status-code: {status.get('status-code')})")
+
+                # Verify user is registered with this device
+                registered_users = device.get_users()
+                if user not in registered_users:
+                    raise RuntimeError(
+                        f"User '{user}' is not registered with PS5 at {ps5_host}. "
+                        "Complete device registration first."
+                    )
+
+                # Create session — no AV receiver, controller input only
+                loop = asyncio.new_event_loop()
+                device.create_session(user, loop=loop)
+                ready_event = threading.Event()
+
+                async def _connect():
+                    started = await device.connect()
+                    if not started:
+                        ready_event.set()
+                        return
+                    await device.async_wait_for_session()
+                    ready_event.set()
+
+                def _run_session():
                     try:
-                        for line in iter(pipe.readline, ''):
-                            if line:
-                                # Log with prefix to identify source
-                                logger.info(f"{prefix} {line.rstrip()}")
-                    except Exception as e:
-                        logger.error(f"Error reading subprocess output: {e}")
+                        loop.run_until_complete(loop.create_task(_connect()))
+                        if device.session and device.session.is_ready:
+                            pipe_reader = PipeReader(device.controller)
+                            pipe_reader.start()
+                            self._pipe_reader = pipe_reader
+                            logger.info("PipeReader started — pipe writers will now unblock")
+                        loop.run_forever()
+                    except Exception as exc:
+                        logger.error(f"Session thread error: {exc}", exc_info=True)
                     finally:
-                        pipe.close()
-                
-                # Start background thread to capture output
-                import threading
-                output_thread = threading.Thread(
-                    target=log_subprocess_output,
-                    args=(self.remoteplay_process.stdout,),
-                    daemon=True
+                        logger.info("Remote Play session thread ended")
+
+                self._session_thread = threading.Thread(
+                    target=_run_session,
+                    name="RemotePlayThread",
+                    daemon=True,
                 )
-                output_thread.start()
-                
-                # Wait briefly to check if process starts successfully
-                time.sleep(2)
-                
-                if self.remoteplay_process.poll() is not None:
-                    # Process terminated immediately
-                    logger.error("Remote Play failed to start")
-                    self.remoteplay_process = None
-                    self.is_connected = False
-                    raise RuntimeError("Remote Play subprocess crashed immediately after start")
-                
-                self.is_connected = True
-                logger.info(f"Remote Play started (PID: {self.remoteplay_process.pid})")
-                return True
-                
-            except FileNotFoundError:
-                logger.error("pyremoteplay module not found. Please ensure it's installed.")
-                self.is_connected = False
-                raise
+                self._session_thread.start()
+
+                # Block up to 10 s for session to reach READY
+                ready_event.wait(timeout=10)
+
+                if device.session and device.session.is_ready:
+                    self.device = device
+                    self._session_loop = loop
+                    self.is_connected = True
+                    logger.info(f"Remote Play session READY (PS5: {ps5_host}, user: {user})")
+                    return True
+
+                # Did not become ready — clean up
+                loop.call_soon_threadsafe(loop.stop)
+                error = device.session.error if device.session else "unknown error"
+                raise RuntimeError(f"Remote Play session failed to reach READY state: {error}")
+
             except ValueError as ve:
                 logger.error(f"Configuration error: {ve}")
                 self.is_connected = False
@@ -261,51 +276,47 @@ class PSNConnectionManager:
                 logger.error(f"Failed to start Remote Play: {e}", exc_info=True)
                 self.is_connected = False
                 raise
-    
+
     def stop_remoteplay(self) -> bool:
-        """
-        Stop pyremoteplay subprocess gracefully.
-        """
+        """Stop the Remote Play session gracefully."""
         with self._lock:
-            if not self.remoteplay_process:
-                logger.warning("No Remote Play process to stop")
+            if not self.device and not self._session_loop:
+                logger.warning("No Remote Play session to stop")
                 return False
-            
+
             try:
-                # Terminate gracefully
-                self.remoteplay_process.terminate()
-                
-                # Wait up to 5 seconds
-                try:
-                    self.remoteplay_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    # Force kill if still running
-                    logger.warning("Remote Play did not terminate, forcing kill")
-                    self.remoteplay_process.kill()
-                    self.remoteplay_process.wait()
-                
+                if self._pipe_reader:
+                    self._pipe_reader.stop()
+                    self._pipe_reader = None
+
+                if self.device:
+                    self.device.disconnect()
+                    self.device = None
+
+                if self._session_loop:
+                    self._session_loop.call_soon_threadsafe(self._session_loop.stop)
+                    self._session_loop = None
+
                 self.is_connected = False
-                self.remoteplay_process = None
                 logger.info("Remote Play stopped")
                 return True
-                
+
             except Exception as e:
                 logger.error(f"Failed to stop Remote Play: {e}")
                 raise
-    
+
     def get_status(self) -> Dict[str, Any]:
         """Get current connection status."""
-        # Check if process is still running
-        if self.remoteplay_process:
-            if self.remoteplay_process.poll() is not None:
-                # Process has terminated
+        # Check if session is still alive
+        if self.device:
+            if not self.device.connected:
                 self.is_connected = False
-                self.remoteplay_process = None
-        
+                self.device = None
+
         return {
             'authenticated': self.is_authenticated,
             'connected': self.is_connected,
-            'process_running': self.remoteplay_process is not None
+            'process_running': self.device is not None,
         }
 
 

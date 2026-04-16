@@ -250,6 +250,7 @@ class PSNConnectionManager:
                     try:
                         loop.run_until_complete(loop.create_task(_connect()))
                         if device.session and device.session.is_ready:
+                            device.controller.start()
                             pipe_reader = PipeReader(device.controller)
                             pipe_reader.start()
                             self._pipe_reader = pipe_reader

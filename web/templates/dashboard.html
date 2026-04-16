@@ -202,8 +202,6 @@
         </div><!-- /dashboard-grid -->
     </div><!-- /container -->
 
-    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
-
     <!-- QR Code Modal -->
     <div id="qr-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="QR Code">
         <div class="modal-box">
@@ -213,5 +211,6 @@
             <p class="qr-url">http://playable.local:5000</p>
         </div>
     </div>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>

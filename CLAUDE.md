@@ -156,7 +156,7 @@ No re-pairing needed unless the device is explicitly removed.
 - The dashboard shows a re-auth link; follow it, copy the redirect URL back in
 
 ## Current Status
-- **Last worked on:** 2026-04-13
+- **Last worked on:** 2026-04-16
 - **Last completed:**
   - Initial setup: repo cloned, venv created, all Python deps installed
   - Named pipe at /tmp/my_pipe, Hardware Producer compiled and running headless
@@ -174,16 +174,26 @@ No re-pairing needed unless the device is explicitly removed.
     → PipeReader → pyremoteplay Controller API → PS5 button presses confirmed
   - Smoke test: all components launch cleanly, graceful shutdown
   - Web dashboard: live at http://192.168.0.145:5000
-- **Next task:** Gesture/vision testing — verify body movements (MediaPipe pose
-  detection) correctly trigger mapped PS5 buttons end-to-end
+  - install.sh: full overhaul for RPi5 — python3-picamera2, bluez, BT config,
+    venv --system-site-packages, startup checks (7 sections, idempotent)
+  - Fixed camera: GestureDetector now uses Picamera2 instead of cv2.VideoCapture
+    (IMX708 CSI camera requires libcamera; OpenCV V4L2 path does not work on RPi5)
+  - Fixed venv: recreated with --system-site-packages so picamera2 is importable
+  - Fixed numpy ABI: pinned numpy<2.0 in requirements.txt (system simplejpeg
+    built against numpy 1.x; 2.x causes ValueError on dtype size mismatch)
+  - Fixed vision FPS: open_pipe periodic retry now uses max_retries=1 — previously
+    each retry blocked the frame loop for 10s (5 attempts × 2s); FPS now ~11
+  - main.py starts cleanly: all 5 components up, Vision FPS ~11 and rising
+- **Next task:** Gesture/vision end-to-end testing — connect to PS5 via dashboard,
+  stand in front of camera, verify mapped gestures trigger correct PS5 buttons
 - **Known issues:**
   - SDL_CONTROLLERDEVICEADDED/REMOVED events are nested inside the
     SDL_CONTROLLERAXISMOTION case in main.cpp — hot-plugging may not work
     (pre-existing bug, not yet fixed; workaround: restart main.py)
   - pyremoteplay is started via the web dashboard UI, not by main.py —
     pipe writers loop waiting for a reader until pyremoteplay connects
-  - Vision Sensor FPS is ~10-20 (target 30+) — camera performance issue,
-    not yet investigated
+  - Vision Sensor FPS is ~11 (target 30+) — MediaPipe pose detection is the
+    bottleneck on RPi5; not yet optimized
   - Flask dev server thread does not stop cleanly within 5s timeout on
     shutdown (logs a warning, exits eventually)
   - pyremoteplay logs ~10 "Version not accepted" protobuf errors during

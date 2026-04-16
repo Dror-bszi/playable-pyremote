@@ -147,14 +147,13 @@ class VisionSensor:
                 else:
                     raise
     
-    def open_pipe(self, verbose=True):
+    def open_pipe(self, verbose=True, max_retries=5):
         """
         Open Named Pipe for writing with retry logic and non-blocking mode.
         
         Args:
             verbose: If False, reduce logging verbosity (for periodic retries)
         """
-        max_retries = 5
         retry_delay = 2
         
         for attempt in range(max_retries):
@@ -391,7 +390,7 @@ class VisionSensor:
                         else:
                             logger.debug(f"Retrying pipe connection (attempt {self._pipe_retry_count})...")
                         
-                        self.open_pipe(verbose=False)
+                        self.open_pipe(verbose=False, max_retries=1)
                         self.last_pipe_retry = current_time
                         if self.pipe is not None:
                             logger.info("✓ Pipe reconnected successfully!")

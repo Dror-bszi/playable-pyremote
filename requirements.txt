@@ -7,6 +7,9 @@ pyee==11.0.1
 pyyaml>=6.0
 netifaces>=0.11.0
 async-timeout
+# numpy<2.0: system picamera2/simplejpeg are compiled against numpy 1.x ABI.
+# Pinning here prevents pip from installing numpy 2.x in the venv.
+numpy<2.0
 opencv-python>=4.8.0
 mediapipe>=0.10.0
 flask>=2.3.0

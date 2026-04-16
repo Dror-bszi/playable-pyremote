@@ -13,6 +13,9 @@ This is the single entry point for starting the PlayAble rehabilitation gaming s
 
 import os
 import sys
+import os
+import select
+import struct
 import time
 import signal
 import logging
@@ -82,6 +85,90 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+class TouchpadReader:
+    """Reads touchpad click from the DualSense touchpad evdev device and
+    writes TOUCHPAD press/release messages to the named pipe.
+
+    The DualSense's hid-playstation driver exposes the touchpad as a separate
+    input node (/dev/input/event7) distinct from the main gamepad device.
+    SDL2's GameController API only monitors the main device, so
+    SDL_CONTROLLER_BUTTON_TOUCHPAD never fires over BT on this system.
+    This thread reads the raw evdev node directly and bypasses SDL2.
+    """
+
+    DEVICE = '/dev/input/event7'
+    BTN_LEFT = 272   # 0x110 — touchpad physical click reported by hid-playstation
+    EV_KEY = 1
+    EV_SIZE = 24     # 64-bit: tv_sec(8) + tv_usec(8) + type(2) + code(2) + value(4)
+    EV_FMT = 'qqHHi'
+
+    def __init__(self, pipe_path: str = '/tmp/my_pipe'):
+        self.pipe_path = pipe_path
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(
+            target=self._read_loop, daemon=True, name='TouchpadReader'
+        )
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=2)
+
+    def _read_loop(self):
+        _log = logging.getLogger(__name__)
+        try:
+            dev_f = open(self.DEVICE, 'rb', buffering=0)
+        except FileNotFoundError:
+            _log.warning(f"TouchpadReader: {self.DEVICE} not found — touchpad click disabled")
+            return
+        except PermissionError:
+            _log.warning(f"TouchpadReader: no permission to read {self.DEVICE}")
+            return
+
+        _log.info(f"TouchpadReader: opened {self.DEVICE}")
+        pipe_fd = None
+        try:
+            while self.running:
+                if pipe_fd is None:
+                    try:
+                        pipe_fd = os.open(self.pipe_path, os.O_WRONLY | os.O_NONBLOCK)
+                    except OSError:
+                        time.sleep(2)
+                        continue
+
+                r, _, _ = select.select([dev_f], [], [], 1.0)
+                if not r:
+                    continue
+                data = dev_f.read(self.EV_SIZE)
+                if len(data) < self.EV_SIZE:
+                    break
+                _, _, typ, code, val = struct.unpack(self.EV_FMT, data)
+                if typ == self.EV_KEY and code == self.BTN_LEFT and val in (0, 1):
+                    action = 'press' if val == 1 else 'release'
+                    msg = f'TOUCHPAD\n{action}\n\n'.encode()
+                    try:
+                        os.write(pipe_fd, msg)
+                    except OSError:
+                        try:
+                            os.close(pipe_fd)
+                        except OSError:
+                            pass
+                        pipe_fd = None
+        finally:
+            dev_f.close()
+            if pipe_fd is not None:
+                try:
+                    os.close(pipe_fd)
+                except OSError:
+                    pass
+        _log.info("TouchpadReader stopped")
+
+
 class PlayAbleOrchestrator:
     """Main orchestrator for the PlayAble rehabilitation gaming system."""
     
@@ -98,6 +185,7 @@ class PlayAbleOrchestrator:
         
         # Component references
         self.hardware_producer_process: Optional[subprocess.Popen] = None
+        self.touchpad_reader: Optional[TouchpadReader] = None
         self.vision_sensor: Optional[VisionSensor] = None
         self.vision_sensor_thread: Optional[threading.Thread] = None
         self.web_dashboard_thread: Optional[threading.Thread] = None
@@ -335,7 +423,9 @@ class PlayAbleOrchestrator:
             # 2. Start Hardware Producer
             logger.info("\n[2/5] Starting Hardware Producer...")
             self.start_hardware_producer()
-            
+            self.touchpad_reader = TouchpadReader(pipe_path=self.pipe_path)
+            self.touchpad_reader.start()
+
             # 3. Initialize shared state
             logger.info("\n[3/5] Initializing shared state...")
             self.initialize_shared_state()
@@ -509,6 +599,10 @@ class PlayAbleOrchestrator:
             except Exception as e:
                 logger.error(f"Error stopping Vision Sensor: {e}", exc_info=True)
         
+        # Stop Touchpad Reader
+        if self.touchpad_reader:
+            self.touchpad_reader.stop()
+
         # Stop Hardware Producer
         if self.hardware_producer_process:
             try:

@@ -654,3 +654,25 @@ function escHtml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
 }
+
+// ── System Restart ────────────────────────────────────────────────────────────
+document.getElementById('btn-restart-system').addEventListener('click', async () => {
+    if (!confirm('Restart PlayAble system?\n\nAll active sessions will be disconnected.')) return;
+
+    const btn = document.getElementById('btn-restart-system');
+    const msg = document.getElementById('restart-message');
+
+    btn.disabled    = true;
+    btn.textContent = 'Restarting…';
+    msg.textContent = 'System is restarting — page will reload in 8 seconds…';
+    msg.className   = 'message info';
+    msg.classList.remove('hidden');
+
+    try {
+        await fetch('/api/system/restart', { method: 'POST' });
+    } catch (_) {
+        // Expected: server may die before the response arrives
+    }
+
+    setTimeout(() => location.reload(), 8000);
+});

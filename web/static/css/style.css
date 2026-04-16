@@ -268,3 +268,8 @@ input[type="text"]:focus {
 
 /* ── Paired controller cards ─────────────────────────────────────────────── */
 .paired-ctrl-card { border-left: 3px solid #667eea; }
+
+/* Restart button row in System Status panel */
+.restart-row { margin-top: 18px; display: flex; align-items: center; gap: 14px; }
+#restart-message { font-size: .9rem; color: #667eea; }
+.message.info { background: #e8eeff; color: #3a4fbd; border: 1px solid #b0bdff; }

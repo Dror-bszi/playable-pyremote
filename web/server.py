@@ -459,6 +459,34 @@ def dashboard():
     return render_template('dashboard.html')
 
 
+
+@app.route('/api/system/restart', methods=['POST'])
+def system_restart():
+    """Kill and relaunch main.py cleanly via a detached background shell."""
+    try:
+        import sys
+        # Resolve paths once so the relaunch shell needs no assumptions
+        python  = sys.executable
+        main_py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'main.py')
+        run_log = os.path.join(os.path.dirname(main_py), 'run.log')
+
+        script = (
+            f"sleep 1 && "
+            f"kill $(pgrep -f 'python.*main.py') 2>/dev/null; "
+            f"sleep 2 && "
+            f"cd {os.path.dirname(main_py)} && "
+            f"nohup {python} {main_py} >> {run_log} 2>&1 &"
+        )
+        subprocess.Popen(['bash', '-c', script],
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        logger.info("System restart initiated")
+        return jsonify({'success': True, 'message': 'Restarting...'})
+    except Exception as e:
+        logger.error(f"Restart error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/status')
 def get_status():
     try:

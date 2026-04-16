@@ -470,14 +470,22 @@ def system_restart():
         main_py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'main.py')
         run_log = os.path.join(os.path.dirname(main_py), 'run.log')
 
-        script = (
-            f"sleep 1 && "
-            f"kill $(pgrep -f 'python.*main.py') 2>/dev/null; "
-            f"sleep 2 && "
-            f"cd {os.path.dirname(main_py)} && "
-            f"nohup {python} {main_py} >> {run_log} 2>&1 &"
-        )
-        subprocess.Popen(['bash', '-c', script],
+        # Write a restart script to disk — avoids all shell quoting issues
+        # and gives us a reliable relaunch even when fds are /dev/null.
+        # sleep 9 > old shutdown (5s dashboard timeout + margin) so port 5000
+        # and camera are fully released before the new process starts.
+        restart_sh = os.path.join(os.path.dirname(main_py), '_restart.sh')
+        with open(restart_sh, 'w') as _f:
+            _f.write(
+                f"#!/bin/bash\n"
+                f"sleep 1\n"
+                f"pkill -f 'python.*main.py' 2>/dev/null\n"
+                f"sleep 9\n"
+                f"cd {os.path.dirname(main_py)}\n"
+                f"{python} {main_py} >> {run_log} 2>&1\n"
+            )
+        os.chmod(restart_sh, 0o755)
+        subprocess.Popen([restart_sh],
                          stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL,
                          start_new_session=True)

@@ -38,6 +38,15 @@ void sendPipeAnalog(const std::string& stick, const std::string& axis, float val
 // Deadzone to prevent drift from slight stick movements
 const int JOYSTICK_DEAD_ZONE = 8000;
 
+// Send neutral (zero) values for all axes — used on disconnect and as a
+// keep-alive heartbeat to prevent PS5 latching a stale non-zero state.
+void sendNeutralAxes(int fd) {
+    sendPipeAnalog("LEFT",  "x", 0.0f, fd);
+    sendPipeAnalog("LEFT",  "y", 0.0f, fd);
+    sendPipeAnalog("RIGHT", "x", 0.0f, fd);
+    sendPipeAnalog("RIGHT", "y", 0.0f, fd);
+}
+
 int main() {
 
     // Register signal handlers so SIGTERM/SIGINT exit the event loop cleanly
@@ -104,6 +113,13 @@ int main() {
 
     std::cout << "Pipe opened. Listening for controller input..." << std::endl;
 
+    // Heartbeat: if no pipe write has occurred in HEARTBEAT_MS, send neutral axes.
+    // This prevents the PS5 latching a stale non-zero stick value when the DualSense
+    // BT HID report rate drops (power-save / sniff mode).
+    const int HEARTBEAT_MS = 200;
+    using Clock = std::chrono::steady_clock;
+    auto last_write_time = Clock::now();
+
     while (!g_quit) {
         while (SDL_PollEvent(&e) != 0) {
 
@@ -159,6 +175,7 @@ int main() {
                             case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
                                 sendPipeButton("R1", "press", fd);
                         }
+                        last_write_time = Clock::now();
                     }
                     break;
                 case SDL_CONTROLLERBUTTONUP:
@@ -210,6 +227,7 @@ int main() {
                             case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
                                 sendPipeButton("R1", "release", fd);
                         }
+                        last_write_time = Clock::now();
                     }
                     break;
                     // --- Handle Axis Motion (Joysticks & Triggers) ---
@@ -257,6 +275,7 @@ int main() {
                                 }
                                 break;
                         }
+                        last_write_time = Clock::now();
                     }
                     break;
 
@@ -276,16 +295,31 @@ int main() {
                         SDL_GameControllerClose(controller);
                         controller = nullptr;
                         std::cout << "Controller disconnected! Sending neutral axes." << std::endl;
-                        sendPipeAnalog("LEFT",  "x", 0.0f, fd);
-                        sendPipeAnalog("LEFT",  "y", 0.0f, fd);
-                        sendPipeAnalog("RIGHT", "x", 0.0f, fd);
-                        sendPipeAnalog("RIGHT", "y", 0.0f, fd);
+                        sendNeutralAxes(fd);
+                        last_write_time = Clock::now();
                     }
                     break;
             }
         }
+
+        // Heartbeat: if the DualSense BT HID report rate has dropped (power-save /
+        // sniff mode), send neutral axes to prevent the PS5 holding a stale state.
+        // This fires only when SDL has been silent for HEARTBEAT_MS — during active
+        // use the timestamp is updated by every event above, so this never triggers.
+        auto now = Clock::now();
+        auto ms_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_write_time).count();
+        if (ms_elapsed >= HEARTBEAT_MS) {
+            sendNeutralAxes(fd);
+            last_write_time = now;
+        }
+
+        // 10ms sleep throttles the poll loop to ~100 Hz.
+        // Prevents CPU busy-wait and reduces pipe write flood.
+        SDL_Delay(10);
     }
-    SDL_Delay(10);
+
     std::cout << "Finished" << std::endl;
     SDL_Quit();
+    return 0;
 }

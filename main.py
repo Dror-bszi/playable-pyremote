@@ -172,8 +172,8 @@ class PlayAbleOrchestrator:
             # Start subprocess
             self.hardware_producer_process = subprocess.Popen(
                 [hardware_producer_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 text=True
             )
             

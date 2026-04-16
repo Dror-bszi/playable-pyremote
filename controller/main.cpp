@@ -236,19 +236,9 @@ int main() {
                         switch (e.caxis.axis) {
                             case SDL_CONTROLLER_AXIS_LEFTX:
                                 sendPipeAnalog("LEFT","x",(float)e.caxis.value/32768, fd);
-                                if (std::abs(e.caxis.value) > JOYSTICK_DEAD_ZONE) {
-                                    std::cout << "Axis "
-                                              << SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)e.caxis.axis)
-                                              << " Value: " << (float)e.caxis.value/32768 << std::endl;
-                                }
                                 break;
                             case SDL_CONTROLLER_AXIS_LEFTY:
                                 sendPipeAnalog("LEFT","y",(float)e.caxis.value/32768, fd);
-                                if (std::abs(e.caxis.value) > JOYSTICK_DEAD_ZONE) {
-                                    std::cout << "Axis "
-                                              << SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)e.caxis.axis)
-                                              << " Value: " << (float)e.caxis.value/32768 << std::endl;
-                                }
                                 break;
                             case SDL_CONTROLLER_AXIS_RIGHTX:
                                 sendPipeAnalog("RIGHT","x",(float)e.caxis.value/32768, fd);

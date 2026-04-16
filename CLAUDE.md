@@ -184,17 +184,39 @@ No re-pairing needed unless the device is explicitly removed.
   - Fixed vision FPS: open_pipe periodic retry now uses max_retries=1 — previously
     each retry blocked the frame loop for 10s (5 attempts × 2s); FPS now ~11
   - main.py starts cleanly: all 5 components up, Vision FPS ~11 and rising
-- **Next task:** Gesture/vision end-to-end testing — connect to PS5 via dashboard,
-  stand in front of camera, verify mapped gestures trigger correct PS5 buttons
+  - Fixed: mappings.json race condition — add_mapping/remove_mapping now reload
+    from disk before modifying, preventing two-instance stale-write clobber
+  - Fixed: PS5 not registering gestures — missing controller.start() call after
+    session connect; pyremoteplay requires it to send periodic STATE heartbeats
+  - Gesture thresholds tuned: delta_threshold=0.03, raise_minimum=0.10
+    (calibrated from live elbow diagnostic logs showing user peak ~0.194)
+  - Debounce: 3 frames press + 3 frames release (was 5) for faster response
+  - Fixed: analog stick latch on disconnect — SDL_CONTROLLERDEVICEREMOVED now
+    sends four 0.0f axis messages before closing; controller was nested in wrong
+    switch case (SDL_CONTROLLERAXISMOTION) — moved to outer switch(e.type)
+  - Dashboard threshold panel: replaced sliders with +/- stepper buttons,
+    instant apply, delta step=0.01, raise step=0.05
+  - Dashboard: Restart System button in System Status panel — shows confirm
+    dialog, POSTs to /api/system/restart, auto-reloads after 8s
+  - Fixed restart button: was using inline bash 'exec >> log' with DEVNULL fds
+    (silent failure) and sleep 2 (too short — shutdown takes ~6s, port conflict
+    killed new process). Fix: write _restart.sh to disk, sleep 9 before relaunch
+  - Gesture detection confirmed end-to-end: camera → MediaPipe → pipe → PS5
+- **Next task:** Full gesture → PS5 test session; then add shoulder shrug gesture
 - **Known issues:**
-  - SDL_CONTROLLERDEVICEADDED/REMOVED events are nested inside the
-    SDL_CONTROLLERAXISMOTION case in main.cpp — hot-plugging may not work
-    (pre-existing bug, not yet fixed; workaround: restart main.py)
   - pyremoteplay is started via the web dashboard UI, not by main.py —
     pipe writers loop waiting for a reader until pyremoteplay connects
-  - Vision Sensor FPS is ~11 (target 30+) — MediaPipe pose detection is the
+  - Vision Sensor FPS is ~26 (target 30+) — MediaPipe pose detection is the
     bottleneck on RPi5; not yet optimized
   - Flask dev server thread does not stop cleanly within 5s timeout on
     shutdown (logs a warning, exits eventually)
   - pyremoteplay logs ~10 "Version not accepted" protobuf errors during
     session negotiation — pre-existing, does not prevent READY state
+
+## Gesture Configuration
+- **Current mappings:** right_elbow_raise → CIRCLE, left_elbow_raise → CROSS
+- **Thresholds:** delta_threshold=0.03 (speed), raise_minimum=0.10 (height)
+- **Debounce:** 3 press frames, 3 release frames
+- **Config file:** config/mappings.json (live-reloaded every 3s by vision_sensor)
+- **Restart:** Dashboard "Restart System" button writes ~/playable/_restart.sh
+  and runs it detached; _restart.sh is gitignored (auto-generated)

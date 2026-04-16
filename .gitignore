@@ -33,3 +33,4 @@ controller/build/
 
 # Logs
 *.log
+_restart.sh

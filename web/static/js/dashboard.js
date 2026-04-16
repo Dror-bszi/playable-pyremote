@@ -682,9 +682,11 @@ document.getElementById('btn-restart-system').addEventListener('click', async ()
     const modal   = document.getElementById('qr-modal');
     const btnOpen = document.getElementById('btn-show-qr');
     const btnClose = document.getElementById('qr-modal-close');
+    if (!modal || !btnOpen || !btnClose) return;
 
-    function openModal()  { modal.classList.remove('hidden'); }
-    function closeModal() { modal.classList.add('hidden'); }
+    // Use style.display directly — avoids conflict with .hidden { display:none !important }
+    function openModal()  { modal.style.display = 'flex'; }
+    function closeModal() { modal.style.display = 'none'; }
 
     btnOpen.addEventListener('click', openModal);
     btnClose.addEventListener('click', closeModal);
@@ -696,6 +698,6 @@ document.getElementById('btn-restart-system').addEventListener('click', async ()
 
     // Escape key to dismiss
     document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+        if (e.key === 'Escape' && modal.style.display !== 'none') closeModal();
     });
 })();

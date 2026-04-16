@@ -1057,7 +1057,8 @@ if __name__ == '__main__':
 @app.route('/setup')
 def wifi_setup():
     hostname = get_hostname() if callable(get_hostname) else 'playable'
-    return render_template('setup.html', hostname=hostname)
+    mode = wifi_manager.get_status()['mode'] if wifi_manager else 'unknown'
+    return render_template('setup.html', hostname=hostname, network_mode=mode)
 
 
 # ── Captive Portal Intercepts ─────────────────────────────────────────────────

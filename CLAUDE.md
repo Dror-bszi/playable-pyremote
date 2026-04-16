@@ -11,11 +11,11 @@ You are my developer and consultant on this project. I will describe what I want
 to build or fix, and you will implement it, test it, and iterate.
 
 ## Target Hardware (Raspberry Pi 5)
-- **Host:** 192.168.0.145
+- **Host:** 192.168.0.145 (or playable-c0e1.local via mDNS)
 - **User:** drorb
-- **SSH:** Use `ssh drorb@192.168.0.145` for all commands on the RPi
+- **SSH:** `ssh drorb@192.168.0.145`
 - **Project path:** ~/playable
-- **OS:** Raspberry Pi OS 64-bit
+- **OS:** Raspberry Pi OS 64-bit (Bookworm)
 
 ## Development Workflow
 1. All code lives on the RPi at ~/playable
@@ -27,22 +27,15 @@ to build or fix, and you will implement it, test it, and iterate.
 5. After completing any meaningful work, commit and push to GitHub
 
 ## First Session Checklist
-On first connection, do the following in order:
-1. SSH into the RPi and verify connectivity
-2. Check if ~/playable exists and if the repo is already cloned
-3. If not cloned:
+1. SSH into the RPi: `ssh drorb@192.168.0.145`
+2. Clone if not present:
    `git clone https://github.com/Dror-bszi/playable-pyremote.git ~/playable`
-4. Check if venv exists (`~/playable/venv/`), if not, create it:
-   `python3 -m venv ~/playable/venv`
-5. Activate venv and run:
-   `pip install -r requirements.txt`
-6. Report current state of the project — what exists, what is missing, any obvious issues
-7. Check if camera is detected:
-   `ls /dev/video*`
-8. Check if the named pipe exists:
-   `ls -l /tmp/my_pipe`
-   If not: `mkfifo /tmp/my_pipe && chmod 666 /tmp/my_pipe`
-9. Apply Bluetooth system config if not already done (see Bluetooth Setup section)
+3. Run the installer (handles everything):
+   `cd ~/playable && ./install.sh`
+4. Reboot: `sudo reboot`
+5. Verify service came up: `sudo systemctl status playable`
+6. Open dashboard: `http://playable-c0e1.local:5000`
+7. Pair DualSense if not yet done — see Bluetooth Setup section below
 
 ## Repository
 - **GitHub:** https://github.com/Dror-bszi/playable-pyremote
@@ -54,18 +47,21 @@ On first connection, do the following in order:
 - **Controller input:** C++ + SDL2 (Hardware Producer, captures DualSense)
 - **PS5 connection:** pyremoteplay (Remote Play protocol, in-process library)
 - **Web dashboard:** Flask
+- **Network:** NetworkManager (nmcli) — WiFi station + hotspot AP mode
 - **IPC:** Named pipe at /tmp/my_pipe
-- **Hardware:** Raspberry Pi 5, USB/Pi Camera, DualSense controller (Bluetooth)
+- **Hardware:** Raspberry Pi 5, IMX708 CSI camera, DualSense controller (Bluetooth)
 
 ## Architecture
-Four components communicating via named pipe:
+Five components:
 1. Hardware Producer (C++) — reads DualSense input via SDL2, writes to pipe
 2. Vision Sensor (Python) — detects gestures via camera, writes to pipe
 3. Remote Play Client (pyremoteplay) — PipeReader reads pipe, forwards to PS5
 4. Web Dashboard (Flask) — therapist UI for config and monitoring
+5. WiFi Manager (Python) — hotspot fallback when no WiFi at startup
 
 ## Project Structure
 
+```
 playable/
 ├── controller/          # Hardware Producer (C++ SDL2)
 │   ├── main.cpp
@@ -76,12 +72,16 @@ playable/
 │   ├── gestures.py     # MediaPipe gesture detection
 │   ├── mappings.py     # Gesture mapping configuration
 │   └── vision_sensor.py
+├── network/            # WiFi / hotspot management
+│   ├── __init__.py
+│   └── wifi_manager.py # WiFiManager class + get_hostname()
 ├── pyremoteplay/       # Remote Play client library (in-repo fork)
 │   └── pipe_reader.py  # Reads named pipe, forwards to Controller API
 ├── web/                # Web Dashboard (Flask)
 │   ├── server.py       # All API endpoints + PSNConnectionManager
 │   ├── templates/
-│   │   └── dashboard.html
+│   │   ├── dashboard.html
+│   │   └── setup.html  # WiFi setup page (captive portal + /setup)
 │   └── static/
 │       ├── css/style.css
 │       └── js/dashboard.js
@@ -92,6 +92,7 @@ playable/
 ├── main.py
 ├── requirements.txt
 └── install.sh
+```
 
 ## Design Priorities
 - Low latency is critical (target <150ms end-to-end)
@@ -105,29 +106,106 @@ playable/
 - Requires: `libsdl2-dev`, `cmake`, `build-essential`
 - Does NOT require a display (SDL_INIT_VIDEO removed — headless safe)
 - Pipe open is non-blocking (O_NONBLOCK): retries every 500ms until a reader connects
-- Handles SIGTERM/SIGINT via signal handler — exits event loop cleanly without force-kill
+- Handles SIGTERM/SIGINT via signal handler — exits event loop cleanly
 - Pipe message format: buttons = `BUTTON_NAME\npress|release\n\n`, analog = `STICK\naxis\nvalue\n`
+- 200ms heartbeat: if SDL is silent 200ms, sends neutral axes → PS5 axis state cleared
 
-## Bluetooth Setup (system config — NOT in git, must be applied on fresh install)
+## WiFi / Network
+
+### Device identity (from RPi serial)
+- Last 4 hex chars of `/proc/cpuinfo` Serial → device ID, e.g. `C0E1`
+- Hostname: `playable-c0e1`  (mDNS: `playable-c0e1.local`)
+- Hotspot SSID: `PlayAble-C0E1`  (open, no password)
+- Hotspot IP: `192.168.4.1`
+- `install.sh` sets the hostname on first run; avahi-daemon advertises it
+
+### Startup network logic (main.py)
+On startup, `check_and_configure_network()` runs before all other components:
+1. Wait up to 20s for a WiFi station connection
+2. If WiFi available → log SSID and continue
+3. If no WiFi → `start_hotspot()` → PlayAble-XXXX AP comes up
+
+### Hotspot mode components
+| Component | What it does |
+|---|---|
+| `nmcli con add … mode ap ipv4.method shared` | Creates AP, NM handles DHCP |
+| `/etc/NetworkManager/dnsmasq-shared.d/playable-captive.conf` | Redirects ALL DNS → 192.168.4.1 |
+| nft table `playable-nat` | Redirects TCP :80 → :5000 (captive portal HTTP) |
+| `/setup` route in Flask | WiFi setup page served to connecting devices |
+
+### Captive portal flow
+Phone connects → DNS returns 192.168.4.1 → HTTP probe hits port 80 → nft redirects
+to 5000 → Flask returns 302 to `/setup` → phone shows "Sign in to network" popup.
+
+### WiFi connection profile name
+NetworkManager auto-names the WiFi profile `"preconfigured"` — NOT the SSID.
+- ✓ `sudo nmcli con down preconfigured`
+- ✗ `sudo nmcli con down "Dror&Yuval"`  ← won't work
+
+### nftables (not iptables)
+RPi OS Bookworm ships only `nft` (no iptables). `wifi_manager.py` uses
+`nft -f -` with a `playable-nat` table. NM's own masquerading uses
+`nm-shared-wlan0` table (set via `firewall-backend=nftables` in NM config).
+
+### /setup page
+- URL: `http://192.168.4.1:5000/setup` (hotspot mode) or `http://playable-c0e1.local:5000/setup`
+- Lists visible networks (rescan button), password field, Connect button
+- On success: shows QR code for `http://playable-c0e1.local:5000`
+- "← Dashboard" back link shown only in WiFi mode (not hotspot)
+
+## Auto-start (systemd)
+
+PlayAble runs as a systemd service and starts automatically on every boot.
+
+**Service file:** `/etc/systemd/system/playable.service` (not in git, written by install.sh)
+
+```ini
+[Unit]
+Description=PlayAble Rehabilitation Gaming System
+After=network.target bluetooth.target
+Wants=network.target bluetooth.target
+
+[Service]
+Type=simple
+User=drorb
+WorkingDirectory=/home/drorb/playable
+ExecStart=/home/drorb/playable/venv/bin/python3 /home/drorb/playable/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+```
+
+**Useful commands:**
+```bash
+sudo systemctl status playable      # check status
+sudo systemctl restart playable     # restart
+sudo journalctl -u playable -f      # live logs
+sudo journalctl -u playable -n 50   # last 50 lines
+```
+
+**Restart button behaviour:**
+When running under systemd (`INVOCATION_ID` env var is set), the dashboard
+"Restart System" button calls `sudo systemctl restart playable`.
+When run directly (dev mode), it falls back to writing and executing `_restart.sh`.
+
+## Bluetooth Setup (system config — written by install.sh)
 
 ### Required changes to /etc/bluetooth/input.conf
-Two lines must be set (uncomment and change default):
 ```
 UserspaceHID=true
 ClassicBondedOnly=false
 ```
 Then: `sudo systemctl restart bluetooth`
 
-**Why UserspaceHID=true**: Routes BT HID through UHID instead of the old HIDP
-kernel socket. UHID creates a proper HID bus device, `hid-playstation` binds to it
-(alias hid:b0005g*v0000054Cp00000CE6), and `/dev/input/event*` nodes appear for SDL2.
+**Why UserspaceHID=true**: Routes BT HID through UHID so `hid-playstation` binds
+(alias `hid:b0005g*v0000054Cp00000CE6`) and `/dev/input/event*` nodes appear for SDL2.
 
-**Why ClassicBondedOnly=false**: Allows the input profile to accept HID connections
-during the pairing process before the bond is fully established.
+**Why ClassicBondedOnly=false**: Allows HID connections during the DualSense
+pairing process before the bond is fully established.
 
 ### DualSense pairing procedure
-Must be done in ONE bluetoothctl session so the agent handles the
-"Authorize service" prompt that appears after pairing:
+Must be done in ONE bluetoothctl session:
 
 ```bash
 bluetoothctl remove BC:C7:46:7D:51:0D 2>/dev/null; true
@@ -140,43 +218,36 @@ bluetoothctl remove BC:C7:46:7D:51:0D 2>/dev/null; true
 } | bluetoothctl
 ```
 
-Verify success: `bluetoothctl info BC:C7:46:7D:51:0D` should show
-`Bonded: yes`, `Trusted: yes`, `Connected: yes`.
-Also check: `ls /dev/input/event5` and `cat /proc/bus/input/devices | grep DualSense`
-
-### After a reboot
-Press PS button on the controller — it auto-reconnects (bonded + trusted).
-No re-pairing needed unless the device is explicitly removed.
+Verify: `bluetoothctl info BC:C7:46:7D:51:0D` → `Bonded: yes`, `Trusted: yes`, `Connected: yes`
+Also: `ls /dev/input/event5` and `cat /proc/bus/input/devices | grep DualSense`
 
 **DualSense MAC:** BC:C7:46:7D:51:0D
 
-### Anti-sniff system config (required — NOT in git)
+After a reboot: press PS button — auto-reconnects (no re-pairing needed).
 
-**Root cause of total control loss:** BCM4345C0 chip (RPi5) uses classic BR/EDR.
-DualSense requests L2CAP sniff mode with `sniff_max_interval=800` (500ms!).
-In sniff mode, HID report rate drops to near-zero, SDL2 receives no events,
-and PS5 latches the last non-zero stick value forever.
+### Anti-sniff system config (written by install.sh)
 
-**Fix 1 — udev rule (persistent):** `/etc/udev/rules.d/99-dualsense-nosniff.rules`
+**Root cause:** BCM4345C0 chip (RPi5) enters L2CAP sniff mode (`sniff_max_interval=800`,
+~500ms), dropping HID report rate to near-zero. SDL2 stops receiving events; PS5
+latches the last non-zero stick value forever.
+
+**Fix 1 — udev rule:** `/etc/udev/rules.d/99-dualsense-nosniff.rules`
 ```
 ACTION=="add", SUBSYSTEM=="input", ATTRS{uniq}=="BC:C7:46:7D:51:0D", \
     RUN+="/bin/sh -c 'sleep 2 && /usr/bin/hcitool lp BC:C7:46:7D:51:0D rswitch'"
 ```
-Then: `sudo udevadm control --reload-rules`
-Effect: removes SNIFF from link policy on every DualSense reconnect.
-Verify: `hcitool lp BC:C7:46:7D:51:0D` should show `RSWITCH` (not SNIFF).
+Fires on every DualSense reconnect. Verify: `hcitool lp BC:C7:46:7D:51:0D` → `RSWITCH`.
+**Update `DUALSENSE_MAC` in `install.sh` if replacing the controller.**
 
-**Fix 2 — WiFi power management off (persistent):** `/etc/NetworkManager/conf.d/99-wifi-powersave.conf`
+**Fix 2 — WiFi power management off:** `/etc/NetworkManager/conf.d/99-wifi-powersave.conf`
 ```
 [connection]
 wifi.powersave = 2
 ```
-Also apply immediately: `sudo iw dev wlan0 set power_save off`
-Why: BCM4345C0 shares WiFi/BT antenna. WiFi power management causes BT stalls.
+Why: BCM4345C0 shares WiFi/BT antenna; WiFi PM causes BT stalls.
 
-**Fix 3 — C++ 200ms heartbeat:** in `controller/main.cpp` (in git as of cec78c4).
-If SDL is silent 200ms, sends neutral axes to pipe → PS5 axis state cleared.
-SDL_Delay(10) is now inside the outer loop (throttles to 100Hz, prevents busy-wait).
+**Fix 3 — C++ 200ms heartbeat:** in `controller/main.cpp`.
+Sends neutral axes if SDL silent 200ms → prevents PS5 latching stale non-zero axis.
 
 ## PSN Authentication
 - Tokens stored in `config/psn_tokens.json` (online_id, credentials, expiration)
@@ -186,78 +257,43 @@ SDL_Delay(10) is now inside the outer loop (throttles to 100Hz, prevents busy-wa
 ## Current Status
 - **Last worked on:** 2026-04-16
 - **Last completed:**
-  - Initial setup: repo cloned, venv created, all Python deps installed
-  - Named pipe at /tmp/my_pipe, Hardware Producer compiled and running headless
-  - pyremoteplay integrated as in-process library (not subprocess)
-  - Web dashboard full overhaul: PS5 device panel, real controller status,
-    Bluetooth pairing UI, PSN auth panel, live status polling
-  - Dashboard: PSN username (online_id) shown on PS5 device cards
-  - Dashboard: Paired Controllers section with per-device Connect button
-  - Fixed: controller status detection uses bluetoothctl BT fallback when
-    /proc/bus/input/devices misses BT HID devices (HIDP path)
-  - Fixed: DualSense BT full chain — UserspaceHID=true + ClassicBondedOnly=false
-    + clean re-pair with persistent bonding. hid-playstation binds over BT via
-    UHID, /dev/input/event5 (js0) created, SDL2 hotplug detects it
-  - End-to-end chain verified with strace: DualSense BT → SDL2 → /tmp/my_pipe
-    → PipeReader → pyremoteplay Controller API → PS5 button presses confirmed
-  - Smoke test: all components launch cleanly, graceful shutdown
-  - Web dashboard: live at http://192.168.0.145:5000
-  - install.sh: full overhaul for RPi5 — python3-picamera2, bluez, BT config,
-    venv --system-site-packages, startup checks (7 sections, idempotent)
-  - Fixed camera: GestureDetector now uses Picamera2 instead of cv2.VideoCapture
-    (IMX708 CSI camera requires libcamera; OpenCV V4L2 path does not work on RPi5)
-  - Fixed venv: recreated with --system-site-packages so picamera2 is importable
-  - Fixed numpy ABI: pinned numpy<2.0 in requirements.txt (system simplejpeg
-    built against numpy 1.x; 2.x causes ValueError on dtype size mismatch)
-  - Fixed vision FPS: open_pipe periodic retry now uses max_retries=1 — previously
-    each retry blocked the frame loop for 10s (5 attempts × 2s); FPS now ~11
-  - main.py starts cleanly: all 5 components up, Vision FPS ~11 and rising
-  - Fixed: mappings.json race condition — add_mapping/remove_mapping now reload
-    from disk before modifying, preventing two-instance stale-write clobber
-  - Fixed: PS5 not registering gestures — missing controller.start() call after
-    session connect; pyremoteplay requires it to send periodic STATE heartbeats
-  - Gesture thresholds tuned: delta_threshold=0.03, raise_minimum=0.10
-    (calibrated from live elbow diagnostic logs showing user peak ~0.194)
-  - Debounce: 3 frames press + 3 frames release (was 5) for faster response
-  - Fixed: analog stick latch on disconnect — SDL_CONTROLLERDEVICEREMOVED now
-    sends four 0.0f axis messages before closing; controller was nested in wrong
-    switch case (SDL_CONTROLLERAXISMOTION) — moved to outer switch(e.type)
-  - Dashboard threshold panel: replaced sliders with +/- stepper buttons,
-    instant apply, delta step=0.01, raise step=0.05
-  - Dashboard: Restart System button in System Status panel — shows confirm
-    dialog, POSTs to /api/system/restart, auto-reloads after 8s
-  - Fixed restart button: was using inline bash 'exec >> log' with DEVNULL fds
-    (silent failure) and sleep 2 (too short — shutdown takes ~6s, port conflict
-    killed new process). Fix: write _restart.sh to disk, sleep 9 before relaunch
-  - Gesture detection confirmed end-to-end: camera → MediaPipe → pipe → PS5
-  - Log rotation: main.py copies run.log → run.log.1 on every startup before
-    initializing the logger (run.log = current session, run.log.1 = previous)
-  - Fixed total control loss (DualSense BT sniff mode): three-part fix:
-    1. C++ 200ms heartbeat in detect_controller — sends neutral axes if SDL
-       silent for 200ms, prevents PS5 latching stale non-zero stick state
-    2. SDL_Delay(10) moved INSIDE outer while loop (was after — only ran on exit)
-    3. WiFi power management disabled permanently (BCM4345C0 antenna sharing)
-  - System files applied (not in git — manual on fresh install):
-    - /etc/udev/rules.d/99-dualsense-nosniff.rules: runs 'hcitool lp rswitch'
-      on every DualSense INPUT add event → persistent sniff-mode disable
-    - /etc/NetworkManager/conf.d/99-wifi-powersave.conf: wifi.powersave=2
+  - WiFi hotspot fallback: PlayAble-C0E1 AP with captive portal
+    - network/wifi_manager.py: serial-based device ID, hotspot start/stop
+    - NM shared mode (DHCP), dnsmasq DNS redirect, nft port 80→5000
+    - /setup page: scan, select, connect, QR code on success
+    - Dashboard Network panel: WiFi/Hotspot badge, SSID, link to /setup
+    - Back button on /setup (visible in WiFi mode only)
+  - systemd service: playable.service auto-starts on boot
+    - Restart button now uses `systemctl restart` when INVOCATION_ID is set
+  - Fixed captive portal: iptables → nft (RPi OS Bookworm has no iptables)
+    - NM firewall-backend=nftables added to NetworkManager.conf
+  - Hotspot fallback verified: WiFi down → 20s wait → PlayAble-C0E1 active
+    - dnsmasq confirmed running with --conf-dir=dnsmasq-shared.d
+    - playable-nat nft table confirmed with :80→:5000 redirect
+  - install.sh comprehensive overhaul: all system config in one script
+    - Added: dnsmasq, avahi-daemon, udev anti-sniff, WiFi powersave,
+      NM firewall-backend, hostname from serial, captive portal config
+    - Renumbered sections [0/10]…[10/10], verification pass at end
+
 - **Next task:** Full gesture → PS5 test session; then add shoulder shrug gesture
+
 - **Known issues:**
+  - WiFi connection profile is named `preconfigured` by NM (not the SSID);
+    `nmcli con down "Dror&Yuval"` fails — use `nmcli con down preconfigured`
   - pyremoteplay is started via the web dashboard UI, not by main.py —
     pipe writers loop waiting for a reader until pyremoteplay connects
-  - Vision Sensor FPS is ~26 (target 30+) — MediaPipe pose detection is the
+  - Vision Sensor FPS is ~20-26 (target 30+) — MediaPipe pose detection is the
     bottleneck on RPi5; not yet optimized
-  - Flask dev server thread does not stop cleanly within 5s timeout on
-    shutdown (logs a warning, exits eventually)
+  - Flask dev server thread does not stop cleanly within 5s on shutdown
+    (logs a warning, exits eventually)
   - pyremoteplay logs ~10 "Version not accepted" protobuf errors during
     session negotiation — pre-existing, does not prevent READY state
-  - udev sniff-disable rule fires on INPUT add, but 'sleep 2' delay assumes
-    DualSense is fully connected by then — may need tuning on slow reconnects
+  - udev sniff-disable rule 'sleep 2' delay may need tuning on slow BT reconnects
 
 ## Gesture Configuration
 - **Current mappings:** right_elbow_raise → CIRCLE, left_elbow_raise → CROSS
 - **Thresholds:** delta_threshold=0.03 (speed), raise_minimum=0.10 (height)
 - **Debounce:** 3 press frames, 3 release frames
 - **Config file:** config/mappings.json (live-reloaded every 3s by vision_sensor)
-- **Restart:** Dashboard "Restart System" button writes ~/playable/_restart.sh
-  and runs it detached; _restart.sh is gitignored (auto-generated)
+- **Restart:** Dashboard "Restart System" button → `systemctl restart playable`
+  (when running as a service) or writes `_restart.sh` and runs it detached (direct)

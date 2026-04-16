@@ -55,7 +55,7 @@ class WiFiManager:
     - IP:    192.168.4.1/24
     - DHCP:  NetworkManager shared mode (built-in)
     - DNS:   NM dnsmasq with address=/#/192.168.4.1 (captive portal)
-    - Port:  iptables redirects :80 → Flask :5000
+    - Port:  nft redirects :80 → Flask :5000 (playable-nat table)
     """
 
     def __init__(self):
@@ -148,24 +148,34 @@ class WiFiManager:
             pass
 
     def _add_iptables_redirect(self):
-        """Redirect incoming TCP :80 on wlan0 → :5000 so Flask handles captive probes."""
+        """Redirect incoming TCP :80 on wlan0 → :5000 so Flask handles captive probes.
+        Uses nft (nftables) — iptables is not present on RPi OS Bookworm.
+        """
+        nft_config = (
+            'table ip playable-nat {\n'
+            '    chain prerouting {\n'
+            '        type nat hook prerouting priority dstnat;\n'
+            '        iif "wlan0" tcp dport 80 redirect to :5000\n'
+            '    }\n'
+            '}\n'
+        )
         try:
-            subprocess.run(
-                ['sudo', 'iptables', '-t', 'nat', '-A', 'PREROUTING',
-                 '-i', 'wlan0', '-p', 'tcp', '--dport', '80',
-                 '-j', 'REDIRECT', '--to-port', '5000'],
+            r = subprocess.run(
+                ['sudo', 'nft', '-f', '-'],
+                input=nft_config, text=True,
                 capture_output=True, timeout=5,
             )
-            logger.info('iptables: :80 → :5000 redirect added on wlan0')
+            if r.returncode == 0:
+                logger.info('nft: :80 → :5000 redirect added (playable-nat table)')
+            else:
+                logger.warning(f'nft redirect failed: {r.stderr.strip()}')
         except Exception as e:
-            logger.warning(f'iptables redirect failed: {e}')
+            logger.warning(f'nft redirect failed: {e}')
 
     def _remove_iptables_redirect(self):
         try:
             subprocess.run(
-                ['sudo', 'iptables', '-t', 'nat', '-D', 'PREROUTING',
-                 '-i', 'wlan0', '-p', 'tcp', '--dport', '80',
-                 '-j', 'REDIRECT', '--to-port', '5000'],
+                ['sudo', 'nft', 'delete', 'table', 'ip', 'playable-nat'],
                 capture_output=True, timeout=5,
             )
         except Exception:

@@ -53,6 +53,13 @@
             background: none; border: none; color: #667eea;
             cursor: pointer; font-size: .82rem; text-decoration: underline;
         }
+        /* Back link */
+        .back-link {
+            display: inline-block; margin-bottom: 20px;
+            color: #667eea; font-size: .88rem; text-decoration: none;
+            font-weight: 500;
+        }
+        .back-link:hover { text-decoration: underline; }
         /* Success section */
         .success-card {
             background: #f0fdf4; border: 1px solid #bbf7d0;
@@ -76,6 +83,10 @@
 </head>
 <body>
 <div class="card">
+    {% if network_mode == 'wifi' %}
+    <a href="http://{{ hostname }}.local:5000" class="back-link">&#8592; Dashboard</a>
+    {% endif %}
+
     <h1>PlayAble</h1>
     <p class="subtitle">Connect to your WiFi network</p>
 

@@ -792,11 +792,15 @@ def thresholds():
             raise_minimum = data.get('raise_minimum')
             if delta_threshold is None or raise_minimum is None:
                 return jsonify({'error': 'delta_threshold and raise_minimum are required'}), 400
-            if not (0.01 <= delta_threshold <= 2.0):
-                return jsonify({'error': 'delta_threshold must be between 0.01 and 2.0'}), 400
-            if not (0.0 <= raise_minimum <= 1.0):
-                return jsonify({'error': 'raise_minimum must be between 0.0 and 1.0'}), 400
+            if not (0.01 <= delta_threshold <= 0.20):
+                return jsonify({'error': 'delta_threshold must be between 0.01 and 0.20'}), 400
+            if not (0.05 <= raise_minimum <= 0.50):
+                return jsonify({'error': 'raise_minimum must be between 0.05 and 0.50'}), 400
+            # Update live GestureDetector in memory immediately
             gesture_detector.update_thresholds(delta_threshold, raise_minimum)
+            # Also persist to mappings.json so vision sensor picks up via live reload
+            if gesture_mapping:
+                gesture_mapping.update_thresholds(delta_threshold, raise_minimum)
             return jsonify({
                 'success': True,
                 'message': 'Thresholds updated',

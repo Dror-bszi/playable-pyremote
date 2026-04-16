@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 # Debounce: how many consecutive frames a gesture must be in the same
 # state before a press or release event is emitted to the pipe.
-DEBOUNCE_PRESS_FRAMES = 5
-DEBOUNCE_RELEASE_FRAMES = 5
+DEBOUNCE_PRESS_FRAMES = 3
+DEBOUNCE_RELEASE_FRAMES = 3
 
 
 class VisionSensor:

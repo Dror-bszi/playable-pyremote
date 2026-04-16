@@ -257,24 +257,31 @@ int main() {
                                 }
                                 break;
                         }
-
-                        break;
-                        // --- Hot-plugging Support ---
-                        case SDL_CONTROLLERDEVICEADDED:
-                        if (!controller) {
-                            controller = SDL_GameControllerOpen(e.cdevice.which);
-                            std::cout << "Controller attached!" << std::endl;
-                        }
-                        break;
-
-                        case SDL_CONTROLLERDEVICEREMOVED:
-                        if (controller && e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
-                            SDL_GameControllerClose(controller);
-                            controller = nullptr;
-                            std::cout << "Controller disconnected!" << std::endl;
-                        }
-                        break;
                     }
+                    break;
+
+                // --- Hot-plugging Support ---
+                case SDL_CONTROLLERDEVICEADDED:
+                    if (!controller) {
+                        controller = SDL_GameControllerOpen(e.cdevice.which);
+                        if (controller) {
+                            std::cout << "Controller attached!" << std::endl;
+                            SDL_GameControllerSetLED(controller, 255, 0, 255);
+                        }
+                    }
+                    break;
+
+                case SDL_CONTROLLERDEVICEREMOVED:
+                    if (controller && e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
+                        SDL_GameControllerClose(controller);
+                        controller = nullptr;
+                        std::cout << "Controller disconnected! Sending neutral axes." << std::endl;
+                        sendPipeAnalog("LEFT",  "x", 0.0f, fd);
+                        sendPipeAnalog("LEFT",  "y", 0.0f, fd);
+                        sendPipeAnalog("RIGHT", "x", 0.0f, fd);
+                        sendPipeAnalog("RIGHT", "y", 0.0f, fd);
+                    }
+                    break;
             }
         }
     }

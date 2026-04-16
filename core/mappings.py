@@ -20,8 +20,8 @@ class GestureMapping:
         self.config_file = config_file
         self.mappings = {}
         self.thresholds = {
-            'delta_threshold': 0.05,
-            'raise_minimum': 0.1
+            'delta_threshold': 0.03,
+            'raise_minimum': 0.10
         }
         
         # Load existing configuration
@@ -205,8 +205,8 @@ class GestureMapping:
         """
         default_config = {
             'thresholds': {
-                'delta_threshold': 0.05,
-                'raise_minimum': 0.1
+                'delta_threshold': 0.03,
+                'raise_minimum': 0.10
             },
             'mappings': {
                 'left_elbow_raise': 'SQUARE',

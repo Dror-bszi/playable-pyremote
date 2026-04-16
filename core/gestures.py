@@ -50,8 +50,8 @@ class GestureDetector:
 
         # Detection thresholds
         self.thresholds = {
-            'delta_threshold': 0.05,  # Speed of movement
-            'raise_minimum': 0.1      # Range of movement
+            'delta_threshold': 0.03,  # Speed of movement
+            'raise_minimum': 0.10     # Range of movement
         }
 
     # ------------------------------------------------------------------

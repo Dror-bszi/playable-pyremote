@@ -34,16 +34,11 @@ function initEventListeners() {
     document.getElementById('btn-bt-scan').addEventListener('click', startBTScan);
     document.getElementById('btn-bt-stop').addEventListener('click', stopBTScan);
 
-    // Thresholds
-    document.getElementById('delta-threshold').addEventListener('input', () => {
-        document.getElementById('delta-value').textContent =
-            document.getElementById('delta-threshold').value;
-    });
-    document.getElementById('raise-minimum').addEventListener('input', () => {
-        document.getElementById('raise-value').textContent =
-            document.getElementById('raise-minimum').value;
-    });
-    document.getElementById('btn-update-thresholds').addEventListener('click', updateThresholds);
+    // Thresholds—+/- steppers, each press immediately POSTs
+    document.getElementById('delta-minus').addEventListener('click', () => adjustThreshold('delta', -0.01));
+    document.getElementById('delta-plus').addEventListener('click',  () => adjustThreshold('delta', +0.01));
+    document.getElementById('raise-minus').addEventListener('click', () => adjustThreshold('raise', -0.05));
+    document.getElementById('raise-plus').addEventListener('click',  () => adjustThreshold('raise', +0.05));
 
     // Mappings
     document.getElementById('btn-add-mapping').addEventListener('click', addMapping);
@@ -537,32 +532,40 @@ async function loadThresholds() {
     try {
         const res  = await fetch('/api/thresholds');
         const data = await res.json();
-        if (data.delta_threshold !== undefined) {
-            document.getElementById('delta-threshold').value = data.delta_threshold;
-            document.getElementById('delta-value').textContent = data.delta_threshold;
-        }
-        if (data.raise_minimum !== undefined) {
-            document.getElementById('raise-minimum').value = data.raise_minimum;
-            document.getElementById('raise-value').textContent = data.raise_minimum;
-        }
+        if (data.delta_threshold !== undefined)
+            document.getElementById('delta-value').textContent = data.delta_threshold.toFixed(2);
+        if (data.raise_minimum !== undefined)
+            document.getElementById('raise-value').textContent = data.raise_minimum.toFixed(2);
     } catch (err) {
         console.error('Failed to load thresholds:', err);
     }
 }
 
-async function updateThresholds() {
-    const delta = parseFloat(document.getElementById('delta-threshold').value);
-    const raise = parseFloat(document.getElementById('raise-minimum').value);
+async function adjustThreshold(which, step) {
+    const DELTA_MIN = 0.01, DELTA_MAX = 0.20;
+    const RAISE_MIN = 0.05, RAISE_MAX = 0.50;
+
+    const deltaEl = document.getElementById('delta-value');
+    const raiseEl = document.getElementById('raise-value');
+
+    let curDelta = parseFloat(deltaEl.textContent);
+    let curRaise = parseFloat(raiseEl.textContent);
+
+    if (which === 'delta') {
+        curDelta = Math.min(DELTA_MAX, Math.max(DELTA_MIN, Math.round((curDelta + step) * 100) / 100));
+        deltaEl.textContent = curDelta.toFixed(2);
+    } else {
+        curRaise = Math.min(RAISE_MAX, Math.max(RAISE_MIN, Math.round((curRaise + step) * 100) / 100));
+        raiseEl.textContent = curRaise.toFixed(2);
+    }
+
     try {
-        showMessage('threshold-message', 'Updating…', 'info');
-        const res  = await fetch('/api/thresholds', {
+        const res = await fetch('/api/thresholds', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ delta_threshold: delta, raise_minimum: raise }),
+            body: JSON.stringify({ delta_threshold: curDelta, raise_minimum: curRaise }),
         });
         const data = await res.json();
-        showMessage('threshold-message',
-            data.success ? 'Thresholds updated!' : `Error: ${data.error}`,
-            data.success ? 'success' : 'error');
+        if (!data.success) showMessage('threshold-message', `Error: ${data.error}`, 'error');
     } catch (err) {
         showMessage('threshold-message', `Failed: ${err.message}`, 'error');
     }

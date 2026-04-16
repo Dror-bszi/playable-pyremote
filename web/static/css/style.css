@@ -175,25 +175,21 @@ header h1 { font-size: 2.5rem; margin-bottom: 8px; text-shadow: 2px 2px 4px rgba
 
 /* ── Threshold Controls ──────────────────────────────────────────────────── */
 .threshold-controls { display: flex; flex-direction: column; gap: 18px; }
+.threshold-row { flex-direction: row; justify-content: space-between; align-items: center; }
 .control-group { display: flex; flex-direction: column; gap: 6px; }
 .control-group label {
     font-weight: 600; color: #555;
     display: flex; justify-content: space-between; align-items: center;
 }
-.control-group label span { color: #667eea; font-size: 1.05rem; }
-input[type="range"] {
-    width: 100%; height: 7px; border-radius: 5px;
-    background: #ddd; outline: none; -webkit-appearance: none;
-}
-input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 18px; height: 18px;
-    border-radius: 50%; background: #667eea; cursor: pointer;
-}
-input[type="range"]::-moz-range-thumb {
-    width: 18px; height: 18px; border-radius: 50%;
-    background: #667eea; cursor: pointer; border: none;
-}
-.range-labels { display: flex; justify-content: space-between; font-size: .82rem; color: #bbb; }
+.control-group label small { font-weight: 400; color: #999; margin-left: 6px; }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper span { min-width: 3.5ch; text-align: center; font-size: 1.1rem;
+    font-weight: 700; color: #667eea; font-variant-numeric: tabular-nums; }
+.btn-stepper { padding: 4px 14px; font-size: 1.3rem; line-height: 1;
+    background: #667eea; color: white; border: none; border-radius: 6px;
+    cursor: pointer; transition: background .15s; }
+.btn-stepper:hover { background: #5568d3; }
+.btn-stepper:active { transform: scale(.95); }
 
 /* ── Gesture Mappings ────────────────────────────────────────────────────── */
 .mapping-controls { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }

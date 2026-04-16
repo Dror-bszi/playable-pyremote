@@ -150,6 +150,34 @@ No re-pairing needed unless the device is explicitly removed.
 
 **DualSense MAC:** BC:C7:46:7D:51:0D
 
+### Anti-sniff system config (required — NOT in git)
+
+**Root cause of total control loss:** BCM4345C0 chip (RPi5) uses classic BR/EDR.
+DualSense requests L2CAP sniff mode with `sniff_max_interval=800` (500ms!).
+In sniff mode, HID report rate drops to near-zero, SDL2 receives no events,
+and PS5 latches the last non-zero stick value forever.
+
+**Fix 1 — udev rule (persistent):** `/etc/udev/rules.d/99-dualsense-nosniff.rules`
+```
+ACTION=="add", SUBSYSTEM=="input", ATTRS{uniq}=="BC:C7:46:7D:51:0D", \
+    RUN+="/bin/sh -c 'sleep 2 && /usr/bin/hcitool lp BC:C7:46:7D:51:0D rswitch'"
+```
+Then: `sudo udevadm control --reload-rules`
+Effect: removes SNIFF from link policy on every DualSense reconnect.
+Verify: `hcitool lp BC:C7:46:7D:51:0D` should show `RSWITCH` (not SNIFF).
+
+**Fix 2 — WiFi power management off (persistent):** `/etc/NetworkManager/conf.d/99-wifi-powersave.conf`
+```
+[connection]
+wifi.powersave = 2
+```
+Also apply immediately: `sudo iw dev wlan0 set power_save off`
+Why: BCM4345C0 shares WiFi/BT antenna. WiFi power management causes BT stalls.
+
+**Fix 3 — C++ 200ms heartbeat:** in `controller/main.cpp` (in git as of cec78c4).
+If SDL is silent 200ms, sends neutral axes to pipe → PS5 axis state cleared.
+SDL_Delay(10) is now inside the outer loop (throttles to 100Hz, prevents busy-wait).
+
 ## PSN Authentication
 - Tokens stored in `config/psn_tokens.json` (online_id, credentials, expiration)
 - Tokens expire — re-authenticate via the dashboard PSN Auth panel if needed
@@ -202,6 +230,17 @@ No re-pairing needed unless the device is explicitly removed.
     (silent failure) and sleep 2 (too short — shutdown takes ~6s, port conflict
     killed new process). Fix: write _restart.sh to disk, sleep 9 before relaunch
   - Gesture detection confirmed end-to-end: camera → MediaPipe → pipe → PS5
+  - Log rotation: main.py copies run.log → run.log.1 on every startup before
+    initializing the logger (run.log = current session, run.log.1 = previous)
+  - Fixed total control loss (DualSense BT sniff mode): three-part fix:
+    1. C++ 200ms heartbeat in detect_controller — sends neutral axes if SDL
+       silent for 200ms, prevents PS5 latching stale non-zero stick state
+    2. SDL_Delay(10) moved INSIDE outer while loop (was after — only ran on exit)
+    3. WiFi power management disabled permanently (BCM4345C0 antenna sharing)
+  - System files applied (not in git — manual on fresh install):
+    - /etc/udev/rules.d/99-dualsense-nosniff.rules: runs 'hcitool lp rswitch'
+      on every DualSense INPUT add event → persistent sniff-mode disable
+    - /etc/NetworkManager/conf.d/99-wifi-powersave.conf: wifi.powersave=2
 - **Next task:** Full gesture → PS5 test session; then add shoulder shrug gesture
 - **Known issues:**
   - pyremoteplay is started via the web dashboard UI, not by main.py —
@@ -212,6 +251,8 @@ No re-pairing needed unless the device is explicitly removed.
     shutdown (logs a warning, exits eventually)
   - pyremoteplay logs ~10 "Version not accepted" protobuf errors during
     session negotiation — pre-existing, does not prevent READY state
+  - udev sniff-disable rule fires on INPUT add, but 'sleep 2' delay assumes
+    DualSense is fully connected by then — may need tuning on slow reconnects
 
 ## Gesture Configuration
 - **Current mappings:** right_elbow_raise → CIRCLE, left_elbow_raise → CROSS

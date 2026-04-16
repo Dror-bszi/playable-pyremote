@@ -136,7 +136,7 @@ class PipeReader:
                     'UP', 'DOWN', 'LEFT', 'RIGHT',
                     'CROSS', 'CIRCLE', 'SQUARE', 'TRIANGLE',
                     'L1', 'R1', 'L2', 'R2', 'L3', 'R3',
-                    'OPTIONS', 'PS'
+                    'OPTIONS', 'PS', 'SHARE', 'TOUCHPAD'
                 ]
                 
                 if line1 not in valid_buttons:

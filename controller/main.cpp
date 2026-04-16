@@ -174,6 +174,12 @@ int main() {
                                 break;
                             case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
                                 sendPipeButton("R1", "press", fd);
+                                break;
+                            case SDL_CONTROLLER_BUTTON_BACK:
+                                sendPipeButton("SHARE", "press", fd);
+                                break;
+                            case SDL_CONTROLLER_BUTTON_TOUCHPAD:
+                                sendPipeButton("TOUCHPAD", "press", fd);
                         }
                         last_write_time = Clock::now();
                     }
@@ -226,6 +232,12 @@ int main() {
                                 break;
                             case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
                                 sendPipeButton("R1", "release", fd);
+                                break;
+                            case SDL_CONTROLLER_BUTTON_BACK:
+                                sendPipeButton("SHARE", "release", fd);
+                                break;
+                            case SDL_CONTROLLER_BUTTON_TOUCHPAD:
+                                sendPipeButton("TOUCHPAD", "release", fd);
                         }
                         last_write_time = Clock::now();
                     }

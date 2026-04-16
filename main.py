@@ -69,6 +69,14 @@ def setup_logging():
     logger.info("=" * 80)
 
 
+# Rotate logs before opening run.log — run.log = current session, run.log.1 = previous.
+# Done here, before setup_logging(), so the logger always starts with an empty file.
+_run_log = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'run.log')
+if os.path.exists(_run_log):
+    import shutil
+    shutil.copy2(_run_log, _run_log + '.1')
+    open(_run_log, 'w').close()  # truncate; logger will append from a clean start
+
 # Setup logging first, before any other modules
 setup_logging()
 logger = logging.getLogger(__name__)

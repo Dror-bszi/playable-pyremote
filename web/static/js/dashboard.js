@@ -762,3 +762,46 @@ document.getElementById('btn-restart-system').addEventListener('click', async ()
         if (e.key === 'Escape' && modal.style.display !== 'none') closeModal();
     });
 })();
+
+// ── Network Status ────────────────────────────────────────────────────────────
+(function () {
+    async function updateNetworkStatus() {
+        try {
+            const r = await fetch('/api/network/status');
+            const d = await r.json();
+            const badge      = document.getElementById('network-badge');
+            const ssidEl     = document.getElementById('network-ssid');
+            const hotspotDiv = document.getElementById('network-hotspot-info');
+            const wifiDiv    = document.getElementById('network-wifi-info');
+            if (!badge) return;   // panel not present
+
+            if (d.mode === 'hotspot') {
+                badge.textContent = 'Hotspot';
+                badge.className   = 'status-badge network-hotspot';
+                if (ssidEl) ssidEl.textContent = d.ssid || '';
+                const nameEl = document.getElementById('hotspot-ssid-name');
+                if (nameEl) nameEl.textContent = d.ssid || '';
+                if (hotspotDiv) hotspotDiv.classList.remove('hidden');
+                if (wifiDiv)    wifiDiv.classList.add('hidden');
+            } else if (d.mode === 'wifi') {
+                badge.textContent = 'WiFi';
+                badge.className   = 'status-badge network-wifi';
+                if (ssidEl) ssidEl.textContent = d.ssid || '';
+                if (hotspotDiv) hotspotDiv.classList.add('hidden');
+                if (wifiDiv)    wifiDiv.classList.remove('hidden');
+            } else {
+                badge.textContent = 'Offline';
+                badge.className   = 'status-badge disconnected';
+                if (ssidEl) ssidEl.textContent = '';
+                if (hotspotDiv) hotspotDiv.classList.add('hidden');
+                if (wifiDiv)    wifiDiv.classList.add('hidden');
+            }
+        } catch (e) {
+            // silently ignore — network panel is non-critical
+        }
+    }
+
+    // Poll every 5 seconds (less aggressive than the main 2s status poll)
+    setInterval(updateNetworkStatus, 5000);
+    updateNetworkStatus();
+})();

@@ -31,6 +31,12 @@ from core.mappings import GestureMapping
 from pyremoteplay.device import RPDevice
 from pyremoteplay.pipe_reader import PipeReader
 
+try:
+    from network.wifi_manager import WiFiManager, get_hostname
+except ImportError:
+    WiFiManager = None
+    def get_hostname(): return "playable"
+
 # Configure logging (if not already configured by main)
 if not logging.getLogger().handlers:
     logging.basicConfig(
@@ -445,14 +451,15 @@ class BluetoothManager:
         return results
 
 
-def init_app(detector: GestureDetector, mapping: GestureMapping):
+def init_app(detector: GestureDetector, mapping: GestureMapping, wm=None):
     """Initialize Flask app with shared state objects. Called by main orchestrator."""
-    global gesture_detector, gesture_mapping, psn_connection_manager, bluetooth_manager
+    global gesture_detector, gesture_mapping, psn_connection_manager, bluetooth_manager, wifi_manager
 
     gesture_detector = detector
     gesture_mapping = mapping
     psn_connection_manager = PSNConnectionManager()
     bluetooth_manager = BluetoothManager()
+    wifi_manager = wm
 
     logger.info("Flask app initialized with shared state")
 
@@ -1036,3 +1043,114 @@ def run_server(host='0.0.0.0', port=5000):
 if __name__ == '__main__':
     logger.warning("Running Flask app directly - shared state will not be initialized")
     run_server()
+
+
+# ── WiFi Setup Page ───────────────────────────────────────────────────────────
+
+@app.route('/setup')
+def wifi_setup():
+    hostname = get_hostname() if callable(get_hostname) else 'playable'
+    return render_template('setup.html', hostname=hostname)
+
+
+# ── Captive Portal Intercepts ─────────────────────────────────────────────────
+# When in hotspot mode, all DNS resolves to 192.168.4.1 and port 80 is redirected
+# to Flask at 5000.  OS captive-portal probes hit these routes; returning a 302
+# causes iOS/Android/Windows to pop up the captive portal browser automatically.
+
+_CAPTIVE_PATHS = (
+    '/hotspot-detect.html',       # Apple iOS / macOS
+    '/library/test/success.html', # Apple legacy
+    '/generate_204',              # Google Android / Chrome
+    '/ncsi.txt',                  # Windows
+    '/connecttest.txt',           # Windows 10+
+    '/canonical.html',            # Firefox
+    '/success.txt',               # misc
+)
+
+def _is_hotspot_mode() -> bool:
+    return wifi_manager is not None and wifi_manager._hotspot_active
+
+@app.route('/hotspot-detect.html')
+@app.route('/library/test/success.html')
+@app.route('/generate_204')
+@app.route('/ncsi.txt')
+@app.route('/connecttest.txt')
+@app.route('/canonical.html')
+@app.route('/success.txt')
+def captive_portal_redirect():
+    """Redirect captive portal probes to /setup when in hotspot mode."""
+    from flask import redirect
+    if _is_hotspot_mode():
+        return redirect('http://192.168.4.1:5000/setup', code=302)
+    # Not in hotspot mode — return expected responses so probes pass
+    path = request.path
+    if path == '/generate_204':
+        return '', 204
+    return 'OK', 200
+
+
+# ── Network API ───────────────────────────────────────────────────────────────
+
+@app.route('/api/network/status')
+def network_status():
+    """Return current network mode, SSID and IP."""
+    try:
+        if wifi_manager:
+            return jsonify(wifi_manager.get_status())
+        return jsonify({'mode': 'unknown', 'ssid': None, 'ip': None})
+    except Exception as e:
+        logger.error(f'network_status error: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/network/scan')
+def network_scan():
+    """Trigger a WiFi scan and return available networks."""
+    try:
+        if not wifi_manager:
+            return jsonify({'networks': []})
+        networks = wifi_manager.get_available_networks()
+        return jsonify({'networks': networks})
+    except Exception as e:
+        logger.error(f'network_scan error: {e}')
+        return jsonify({'error': str(e), 'networks': []}), 500
+
+
+@app.route('/api/network/wifi', methods=['POST'])
+def connect_wifi():
+    """
+    Connect to a WiFi network.  Stops the hotspot first.
+    The connection happens in a background thread after a short delay so the
+    response (with the redirect URL) reaches the client before the hotspot drops.
+    If the connection fails, the hotspot is restarted automatically.
+    """
+    try:
+        data = request.get_json() or {}
+        ssid = data.get('ssid', '').strip()
+        password = data.get('password', '')
+        if not ssid:
+            return jsonify({'error': 'ssid is required'}), 400
+        if not wifi_manager:
+            return jsonify({'error': 'WiFiManager not initialised'}), 500
+
+        hostname = wifi_manager.hostname if wifi_manager else get_hostname()
+
+        def _do_connect():
+            import time as _time
+            _time.sleep(2)   # let the response reach the client first
+            ok, msg = wifi_manager.connect_to_wifi(ssid, password)
+            if not ok:
+                logger.warning(f'WiFi connect to "{ssid}" failed: {msg} — restarting hotspot')
+                wifi_manager.start_hotspot()
+
+        threading.Thread(target=_do_connect, daemon=True, name='WiFiConnect').start()
+
+        return jsonify({
+            'success': True,
+            'message': f'Connecting to {ssid}…',
+            'redirect_url': f'http://{hostname}.local:5000',
+        })
+    except Exception as e:
+        logger.error(f'connect_wifi error: {e}')
+        return jsonify({'error': str(e)}), 500

@@ -365,3 +365,15 @@ header {
     color: #aaa;
     text-decoration: underline;
 }
+
+/* ── Network Panel ───────────────────────────────────────────────────────── */
+.network-panel {}
+.network-status-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.network-ssid-label { font-size: .85rem; color: #555; font-weight: 500; }
+
+.status-badge.network-hotspot {
+    background: #fff3e0; color: #e65100; border: 2px solid #ff9800;
+}
+.status-badge.network-wifi {
+    background: #e8f5e9; color: #2e7d32; border: 2px solid #4caf50;
+}

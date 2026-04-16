@@ -92,6 +92,23 @@
                 </div>
             </section>
 
+
+            <!-- ── Network ── -->
+            <section class="panel network-panel">
+                <h2>Network</h2>
+                <div class="network-status-row">
+                    <div id="network-badge" class="status-badge disconnected">Checking…</div>
+                    <div id="network-ssid" class="network-ssid-label"></div>
+                </div>
+                <div id="network-hotspot-info" class="hidden" style="margin-top:12px">
+                    <p class="info-text">Hotspot active — connect to <strong id="hotspot-ssid-name"></strong></p>
+                    <a href="/setup" target="_blank" class="btn btn-primary btn-sm" style="margin-top:8px;display:inline-block;">Open WiFi Setup</a>
+                </div>
+                <div id="network-wifi-info" class="hidden" style="margin-top:10px">
+                    <a href="/setup" target="_blank" class="change-ip-link">Change network…</a>
+                </div>
+            </section>
+
             <!-- ── Controller & Bluetooth ── -->
             <section class="panel controller-panel">
                 <h2>DualSense Controller</h2>
@@ -207,8 +224,8 @@
         <div class="modal-box">
             <button id="qr-modal-close" class="modal-close" aria-label="Close">&times;</button>
             <h3>Scan to Open Dashboard</h3>
-            <img src="{{ url_for('static', filename='qr.png') }}" alt="QR code for playable.local:5000" class="qr-img">
-            <p class="qr-url">http://playable.local:5000</p>
+            <img src="{{ url_for('static', filename='qr.png') }}" alt="QR code for playable-c0e1.local:5000" class="qr-img">
+            <p class="qr-url">http://playable-c0e1.local:5000</p>
         </div>
     </div>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

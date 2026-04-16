@@ -57,6 +57,16 @@ sudo apt-get install -y \
 
 echo "  System packages installed."
 
+# dnsmasq is installed for its binary only — NM uses it internally for hotspot
+# shared mode.  The system dnsmasq service must be disabled to avoid port 53 conflict.
+if systemctl is-enabled --quiet dnsmasq 2>/dev/null; then
+    echo "  Disabling dnsmasq system service (NM uses it internally)..."
+    sudo systemctl disable dnsmasq
+    sudo systemctl stop dnsmasq 2>/dev/null || true
+else
+    echo "  dnsmasq system service already disabled — OK."
+fi
+
 # -----------------------------------------------
 # 2. PYTHON VIRTUAL ENVIRONMENT
 # -----------------------------------------------
@@ -272,6 +282,38 @@ if grep -q "^UserspaceHID=true" "$BT_CONF" && grep -q "^ClassicBondedOnly=false"
 else
     echo "  [FAIL] Bluetooth input.conf settings not applied correctly."
     CHECKS_PASSED=false
+fi
+
+
+# -----------------------------------------------
+# 8. HOSTNAME FROM SERIAL (playable-XXXX)
+# -----------------------------------------------
+echo ''
+echo "[8/8] Setting device hostname from serial number..."
+
+SERIAL=$(grep '^Serial' /proc/cpuinfo | awk '{print $3}')
+if [ -n "$SERIAL" ] && [ ${#SERIAL} -ge 4 ]; then
+    DEVICE_ID=$(echo "$SERIAL" | tail -c 5 | tr 'a-z' 'A-Z')
+    TARGET_HOSTNAME="playable-$(echo $DEVICE_ID | tr 'A-Z' 'a-z')"
+    CURRENT_HOSTNAME=$(hostname)
+    if [ "$CURRENT_HOSTNAME" = "$TARGET_HOSTNAME" ]; then
+        echo "  Hostname already set to $TARGET_HOSTNAME — OK."
+    else
+        echo "  Setting hostname: $CURRENT_HOSTNAME → $TARGET_HOSTNAME"
+        sudo hostnamectl set-hostname "$TARGET_HOSTNAME"
+        sudo sed -i "s/127.0.1.1.*/127.0.1.1	$TARGET_HOSTNAME/" /etc/hosts
+        sudo systemctl restart avahi-daemon
+        echo "  Hostname set to $TARGET_HOSTNAME (mDNS: $TARGET_HOSTNAME.local)"
+    fi
+
+    # Create NM dnsmasq captive-portal config for hotspot mode
+    NM_DNSMASQ_DIR="/etc/NetworkManager/dnsmasq-shared.d"
+    NM_CAPTIVE_CONF="$NM_DNSMASQ_DIR/playable-captive.conf"
+    sudo mkdir -p "$NM_DNSMASQ_DIR"
+    echo "address=/#/192.168.4.1" | sudo tee "$NM_CAPTIVE_CONF" > /dev/null
+    echo "  Captive portal DNS config: $NM_CAPTIVE_CONF"
+else
+    echo "  [WARN] Could not read RPi serial — skipping hostname config."
 fi
 
 # -----------------------------------------------

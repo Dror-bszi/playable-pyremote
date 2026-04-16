@@ -21,6 +21,8 @@ class GestureMapping:
         self.mappings = {}
         self.thresholds = {
             'delta_threshold': 0.03,
+            'shrug_minimum': 0.05,
+            'mouth_open_minimum': 0.35,
             'raise_minimum': 0.10
         }
         
@@ -174,25 +176,39 @@ class GestureMapping:
         """
         return self.thresholds.copy()
     
-    def update_thresholds(self, delta_threshold: Optional[float] = None, 
-                         raise_minimum: Optional[float] = None):
+    def update_thresholds(self, delta_threshold: Optional[float] = None,
+                         raise_minimum: Optional[float] = None,
+                         shrug_minimum: Optional[float] = None,
+                         mouth_open_minimum: Optional[float] = None):
         """
         Update detection thresholds.
-        
+
         Args:
-            delta_threshold: Speed of movement threshold (0.1 - 2.0)
-            raise_minimum: Range of movement threshold (0.0 - 1.0)
+            delta_threshold: Speed of movement threshold
+            raise_minimum: Range of movement threshold
+            shrug_minimum: Shoulder height asymmetry threshold for shrug gestures
+            mouth_open_minimum: Normalized nose-to-mouth threshold for mouth open
         """
         if delta_threshold is not None:
             if not 0.01 <= delta_threshold <= 2.0:
                 raise ValueError("delta_threshold must be between 0.01 and 2.0")
             self.thresholds['delta_threshold'] = delta_threshold
-        
+
         if raise_minimum is not None:
             if not 0.0 <= raise_minimum <= 1.0:
                 raise ValueError("raise_minimum must be between 0.0 and 1.0")
             self.thresholds['raise_minimum'] = raise_minimum
-        
+
+        if shrug_minimum is not None:
+            if not 0.0 <= shrug_minimum <= 1.0:
+                raise ValueError("shrug_minimum must be between 0.0 and 1.0")
+            self.thresholds['shrug_minimum'] = shrug_minimum
+
+        if mouth_open_minimum is not None:
+            if not 0.0 <= mouth_open_minimum <= 2.0:
+                raise ValueError("mouth_open_minimum must be between 0.0 and 2.0")
+            self.thresholds['mouth_open_minimum'] = mouth_open_minimum
+
         # Auto-save
         self.save_mappings()
     
@@ -206,6 +222,8 @@ class GestureMapping:
         default_config = {
             'thresholds': {
                 'delta_threshold': 0.03,
+                'shrug_minimum': 0.05,
+                'mouth_open_minimum': 0.35,
                 'raise_minimum': 0.10
             },
             'mappings': {

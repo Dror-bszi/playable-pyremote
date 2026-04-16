@@ -51,7 +51,9 @@ class GestureDetector:
         # Detection thresholds
         self.thresholds = {
             'delta_threshold': 0.03,  # Speed of movement
-            'raise_minimum': 0.10     # Range of movement
+            'raise_minimum': 0.10,    # Range of movement
+            'shrug_minimum': 0.05,    # Shoulder height asymmetry for shrug
+            'mouth_open_minimum': 0.35  # Nose-to-mouth / shoulder-width ratio
         }
 
     # ------------------------------------------------------------------
@@ -174,16 +176,24 @@ class GestureDetector:
 
         return annotated_frame
 
-    def update_thresholds(self, delta: float, raise_min: float):
+    def update_thresholds(self, delta: float, raise_min: float,
+                          shrug_min: Optional[float] = None,
+                          mouth_open_min: Optional[float] = None):
         """
         Update detection thresholds in real-time.
 
         Args:
             delta: New delta_threshold value (speed of movement)
             raise_min: New raise_minimum value (range of movement)
+            shrug_min: Shoulder height asymmetry threshold for shrug gestures
+            mouth_open_min: Normalized nose-to-mouth threshold for mouth open
         """
         self.thresholds['delta_threshold'] = delta
         self.thresholds['raise_minimum'] = raise_min
+        if shrug_min is not None:
+            self.thresholds['shrug_minimum'] = shrug_min
+        if mouth_open_min is not None:
+            self.thresholds['mouth_open_minimum'] = mouth_open_min
 
     def get_thresholds(self) -> dict:
         """
@@ -271,6 +281,15 @@ class GestureDetector:
 
             elif gesture_name == "right_arm_forward":
                 gesture_detected = self._check_arm_forward(RIGHT_WRIST)
+
+            elif gesture_name == "left_shoulder_shrug":
+                gesture_detected = self._check_shoulder_shrug('left')
+
+            elif gesture_name == "right_shoulder_shrug":
+                gesture_detected = self._check_shoulder_shrug('right')
+
+            elif gesture_name == "mouth_open":
+                gesture_detected = self._check_mouth_open()
 
             # Generate press/release events based on detection
             if gesture_detected:
@@ -376,6 +395,77 @@ class GestureDetector:
 
         # Check if moving forward with sufficient speed
         return delta_z > self.thresholds['delta_threshold']
+
+    def _check_shoulder_shrug(self, shrug_side: str) -> bool:
+        """
+        Check if one shoulder is raised significantly relative to the other.
+
+        Args:
+            shrug_side: 'left' or 'right' — which shoulder is being shrugged
+
+        Returns:
+            True if gesture detected
+        """
+        if self.current_landmarks is None:
+            return False
+
+        LEFT_SHOULDER = self.mp_pose.PoseLandmark.LEFT_SHOULDER.value
+        RIGHT_SHOULDER = self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value
+
+        left_sh = self.current_landmarks.landmark[LEFT_SHOULDER]
+        right_sh = self.current_landmarks.landmark[RIGHT_SHOULDER]
+
+        # Y increases downward; a raised shoulder has a lower Y value.
+        # Left shrug: left shoulder above right → right.y - left.y > threshold
+        # Right shrug: right shoulder above left → left.y - right.y > threshold
+        if shrug_side == 'left':
+            diff = right_sh.y - left_sh.y
+        else:
+            diff = left_sh.y - right_sh.y
+
+        return diff > self.thresholds['shrug_minimum']
+
+    def _check_mouth_open(self) -> bool:
+        """
+        Detect when mouth is open beyond a threshold.
+
+        Uses the vertical distance from nose to mouth midpoint, normalized by
+        shoulder width, as a proxy for mouth opening.  MediaPipe Pose only
+        exposes mouth-corner landmarks (9, 10), not lip landmarks, so this is
+        an approximation — the threshold should be tuned per patient via the
+        dashboard.
+
+        Returns:
+            True if gesture detected
+        """
+        if self.current_landmarks is None:
+            return False
+
+        NOSE = self.mp_pose.PoseLandmark.NOSE.value
+        MOUTH_LEFT = self.mp_pose.PoseLandmark.MOUTH_LEFT.value
+        MOUTH_RIGHT = self.mp_pose.PoseLandmark.MOUTH_RIGHT.value
+        LEFT_SHOULDER = self.mp_pose.PoseLandmark.LEFT_SHOULDER.value
+        RIGHT_SHOULDER = self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value
+
+        nose = self.current_landmarks.landmark[NOSE]
+        mouth_left = self.current_landmarks.landmark[MOUTH_LEFT]
+        mouth_right = self.current_landmarks.landmark[MOUTH_RIGHT]
+        left_sh = self.current_landmarks.landmark[LEFT_SHOULDER]
+        right_sh = self.current_landmarks.landmark[RIGHT_SHOULDER]
+
+        mouth_mid_y = (mouth_left.y + mouth_right.y) / 2.0
+
+        # Vertical distance nose → mouth (positive: mouth is below nose)
+        nose_to_mouth = mouth_mid_y - nose.y
+
+        # Normalize by shoulder width so distance from camera doesn't matter
+        shoulder_width = abs(left_sh.x - right_sh.x)
+        if shoulder_width < 0.01:
+            return False
+
+        normalized = nose_to_mouth / shoulder_width
+
+        return normalized > self.thresholds['mouth_open_minimum']
 
     def cleanup(self):
         """Release camera and MediaPipe resources."""

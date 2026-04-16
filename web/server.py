@@ -826,21 +826,30 @@ def thresholds():
             data = request.get_json()
             delta_threshold = data.get('delta_threshold')
             raise_minimum = data.get('raise_minimum')
+            shrug_minimum = data.get('shrug_minimum')
+            mouth_open_minimum = data.get('mouth_open_minimum')
             if delta_threshold is None or raise_minimum is None:
                 return jsonify({'error': 'delta_threshold and raise_minimum are required'}), 400
             if not (0.01 <= delta_threshold <= 0.20):
                 return jsonify({'error': 'delta_threshold must be between 0.01 and 0.20'}), 400
             if not (0.05 <= raise_minimum <= 0.50):
                 return jsonify({'error': 'raise_minimum must be between 0.05 and 0.50'}), 400
+            if shrug_minimum is not None and not (0.01 <= shrug_minimum <= 0.50):
+                return jsonify({'error': 'shrug_minimum must be between 0.01 and 0.50'}), 400
+            if mouth_open_minimum is not None and not (0.10 <= mouth_open_minimum <= 1.0):
+                return jsonify({'error': 'mouth_open_minimum must be between 0.10 and 1.0'}), 400
             # Update live GestureDetector in memory immediately
-            gesture_detector.update_thresholds(delta_threshold, raise_minimum)
+            gesture_detector.update_thresholds(delta_threshold, raise_minimum,
+                                                shrug_minimum, mouth_open_minimum)
             # Also persist to mappings.json so vision sensor picks up via live reload
             if gesture_mapping:
-                gesture_mapping.update_thresholds(delta_threshold, raise_minimum)
+                gesture_mapping.update_thresholds(delta_threshold, raise_minimum,
+                                                  shrug_minimum, mouth_open_minimum)
+            updated = gesture_detector.get_thresholds()
             return jsonify({
                 'success': True,
                 'message': 'Thresholds updated',
-                'thresholds': {'delta_threshold': delta_threshold, 'raise_minimum': raise_minimum},
+                'thresholds': updated,
             })
         except Exception as e:
             logger.error(f"Update thresholds error: {e}")

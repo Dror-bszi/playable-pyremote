@@ -476,38 +476,45 @@ def dashboard():
 
 @app.route('/api/system/restart', methods=['POST'])
 def system_restart():
-    """Kill and relaunch main.py cleanly via a detached background shell."""
+    """Restart via systemctl when running as a service, else use _restart.sh."""
     try:
         import sys
-        # Resolve paths once so the relaunch shell needs no assumptions
-        python  = sys.executable
-        main_py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'main.py')
-        run_log = os.path.join(os.path.dirname(main_py), 'run.log')
-
-        # Write a restart script to disk — avoids all shell quoting issues
-        # and gives us a reliable relaunch even when fds are /dev/null.
-        # sleep 9 > old shutdown (5s dashboard timeout + margin) so port 5000
-        # and camera are fully released before the new process starts.
-        restart_sh = os.path.join(os.path.dirname(main_py), '_restart.sh')
-        with open(restart_sh, 'w') as _f:
-            _f.write(
-                f"#!/bin/bash\n"
-                f"sleep 1\n"
-                f"pkill -f 'python.*main.py' 2>/dev/null\n"
-                f"sleep 9\n"
-                f"cd {os.path.dirname(main_py)}\n"
-                f"{python} {main_py} >> {run_log} 2>&1\n"
+        # When running under systemd, INVOCATION_ID is set in the environment.
+        if os.environ.get("INVOCATION_ID"):
+            subprocess.Popen(
+                ["sudo", "systemctl", "restart", "playable"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
+            logger.info("System restart via systemctl")
+            return jsonify({"success": True, "message": "Restarting..."})
+
+        # Fallback for direct (non-service) invocation
+        python  = sys.executable
+        main_py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
+        run_log = os.path.join(os.path.dirname(main_py), "run.log")
+        restart_sh = os.path.join(os.path.dirname(main_py), "_restart.sh")
+        with open(restart_sh, "w") as _f:
+            _f.write(
+                "#!/bin/bash\n"
+                "sleep 1\n"
+                "pkill -f 'python.*main.py' 2>/dev/null\n"
+                "sleep 9\n"
+            )
+            main_dir = os.path.dirname(main_py)
+            _f.write(f"cd {main_dir}\n")
+            _f.write(f"{python} {main_py} >> {run_log} 2>&1\n")
         os.chmod(restart_sh, 0o755)
         subprocess.Popen([restart_sh],
                          stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL,
                          start_new_session=True)
-        logger.info("System restart initiated")
-        return jsonify({'success': True, 'message': 'Restarting...'})
+        logger.info("System restart via _restart.sh")
+        return jsonify({"success": True, "message": "Restarting..."})
     except Exception as e:
         logger.error(f"Restart error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/status')
 def get_status():

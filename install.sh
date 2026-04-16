@@ -316,6 +316,58 @@ else
     echo "  [WARN] Could not read RPi serial — skipping hostname config."
 fi
 
+
+# -----------------------------------------------
+# 9. SYSTEMD SERVICE
+# -----------------------------------------------
+echo ''
+echo "[9/9] Setting up playable systemd service..."
+
+SERVICE_FILE="/etc/systemd/system/playable.service"
+VENV_PYTHON="$SCRIPT_DIR/venv/bin/python3"
+
+cat | sudo tee "$SERVICE_FILE" > /dev/null << 'SVCEOF'
+[Unit]
+Description=PlayAble Rehabilitation Gaming System
+After=network.target bluetooth.target
+Wants=network.target bluetooth.target
+
+[Service]
+Type=simple
+User=drorb
+WorkingDirectory=WORKDIR_PLACEHOLDER
+ExecStart=PYTHON_PLACEHOLDER MAINPY_PLACEHOLDER
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+# Substitute real paths into the service file
+sudo sed -i "s|WORKDIR_PLACEHOLDER|$SCRIPT_DIR|g" "$SERVICE_FILE"
+sudo sed -i "s|PYTHON_PLACEHOLDER|$VENV_PYTHON|g" "$SERVICE_FILE"
+sudo sed -i "s|MAINPY_PLACEHOLDER|$SCRIPT_DIR/main.py|g" "$SERVICE_FILE"
+
+sudo systemctl daemon-reload
+sudo systemctl enable playable
+echo "  playable.service enabled (starts on every boot)"
+
+# Start or restart if already running
+if systemctl is-active --quiet playable; then
+    echo "  Service already running — skipping start (use: sudo systemctl restart playable)"
+else
+    sudo systemctl start playable
+    sleep 5
+    if systemctl is-active --quiet playable; then
+        echo "  [OK]   playable.service started successfully"
+    else
+        echo "  [FAIL] playable.service failed to start — check: journalctl -u playable"
+    fi
+fi
+
 # -----------------------------------------------
 # SUMMARY
 # -----------------------------------------------

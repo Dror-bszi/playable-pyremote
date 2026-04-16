@@ -78,14 +78,15 @@ function buildDeviceCard(device, username) {
     card.className  = 'device-card';
     card.dataset.mac = device.mac;
 
-    const savedIp = device.ip || '';
-    const hasIp   = savedIp.length > 0;
+    // let so we can update after a save without stale-closure issues
+    let currentIp = device.ip || '';
+    const hasIp   = currentIp.length > 0;
 
     // Rows differ based on whether we already have a saved IP
     const ipRowHtml = hasIp
-        ? `<span class="device-ip-static">${escHtml(savedIp)}</span>
+        ? `<span class="device-ip-static">${escHtml(currentIp)}</span>
            <a href="#" class="change-ip-link">Change IP</a>
-           <input type="text" class="device-ip-input hidden" placeholder="192.168.0.33" value="${escHtml(savedIp)}">`
+           <input type="text" class="device-ip-input hidden" placeholder="192.168.0.33" value="${escHtml(currentIp)}">`
         : `<input type="text" class="device-ip-input" placeholder="192.168.0.33" value="">`;
 
     card.innerHTML = `
@@ -101,14 +102,39 @@ function buildDeviceCard(device, username) {
         </div>
     `;
 
-    const ipInput    = card.querySelector('.device-ip-input');
-    const ipStatic   = card.querySelector('.device-ip-static');
-    const changeLink = card.querySelector('.change-ip-link');
+    const ipInput      = card.querySelector('.device-ip-input');
+    const ipStatic     = card.querySelector('.device-ip-static');
+    const changeLink   = card.querySelector('.change-ip-link');
+    const connectBtn   = card.querySelector('.btn-connect-device');
+    const disconnectBtn = card.querySelector('.btn-disconnect-device');
+
+    // Restore the static-IP display after editing
+    function restoreStaticDisplay(ip) {
+        if (ipStatic) {
+            ipStatic.textContent   = ip;
+            ipStatic.style.display = '';
+        }
+        if (changeLink) changeLink.style.display = '';
+        ipInput.classList.add('hidden');
+    }
+
+    // Persist IP to server and update local reference
+    function persistIp(ip) {
+        const rawMac = device.mac.replace(/:/g, '');
+        fetch(`/api/ps5/devices/${encodeURIComponent(rawMac)}/ip`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip }),
+        }).catch(() => {});
+        currentIp = ip;
+    }
 
     if (changeLink) {
         changeLink.addEventListener('click', e => {
             e.preventDefault();
-            ipStatic.style.display   = 'none';
+            // Show input for editing — button visibility is intentionally left unchanged
+            // so Disconnect stays visible if a session is active.
+            if (ipStatic) ipStatic.style.display = 'none';
             changeLink.style.display = 'none';
             ipInput.classList.remove('hidden');
             ipInput.focus();
@@ -116,25 +142,27 @@ function buildDeviceCard(device, username) {
         });
     }
 
-    card.querySelector('.btn-connect-device').addEventListener('click', () => {
+    connectBtn.addEventListener('click', () => {
         const ip = ipInput.value.trim();
         if (!ip) {
             showMessage('psn-message', 'Enter the PS5 IP address', 'error');
             return;
         }
-        // Persist changed IP before connecting
-        if (ip !== savedIp) {
-            const rawMac = device.mac.replace(/:/g, '');
-            fetch(`/api/ps5/devices/${encodeURIComponent(rawMac)}/ip`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ip }),
-            }).catch(() => {});
+
+        if (ip !== currentIp) persistIp(ip);
+
+        // If a session is already active (Disconnect is visible), just save the IP
+        // and restore the static display — do not attempt a second connection.
+        if (!disconnectBtn.classList.contains('hidden')) {
+            restoreStaticDisplay(ip);
+            showMessage('psn-message', 'IP saved — takes effect on next connect', 'success');
+            return;
         }
+
         connectToPS5(ip, card);
     });
 
-    card.querySelector('.btn-disconnect-device').addEventListener('click', () => {
+    disconnectBtn.addEventListener('click', () => {
         disconnectPS5(card);
     });
 

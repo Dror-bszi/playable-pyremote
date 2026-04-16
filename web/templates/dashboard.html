@@ -11,6 +11,9 @@
         <header>
             <h1>PlayAble</h1>
             <p class="subtitle">Rehabilitation Gaming Controller</p>
+            <button id="btn-show-qr" class="btn btn-secondary btn-qr" title="Show QR Code">
+                &#9638; QR Code
+            </button>
         </header>
 
         <div class="dashboard-grid">
@@ -169,7 +172,9 @@
                             <option value="right_elbow_raise">Right Elbow Raise</option>
                             <option value="left_arm_forward">Left Arm Forward</option>
                             <option value="right_arm_forward">Right Arm Forward</option>
-                            <option value="shoulder_shrug">Shoulder Shrug</option>
+                            <option value="left_shoulder_shrug">Left Shoulder Shrug</option>
+                            <option value="right_shoulder_shrug">Right Shoulder Shrug</option>
+                            <option value="mouth_open">Mouth Open</option>
                         </select>
                     </div>
                     <div class="control-group">
@@ -198,5 +203,15 @@
     </div><!-- /container -->
 
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+
+    <!-- QR Code Modal -->
+    <div id="qr-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="QR Code">
+        <div class="modal-box">
+            <button id="qr-modal-close" class="modal-close" aria-label="Close">&times;</button>
+            <h3>Scan to Open Dashboard</h3>
+            <img src="{{ url_for('static', filename='qr.png') }}" alt="QR code for playable.local:5000" class="qr-img">
+            <p class="qr-url">http://playable.local:5000</p>
+        </div>
+    </div>
 </body>
 </html>

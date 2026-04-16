@@ -13,7 +13,6 @@ This is the single entry point for starting the PlayAble rehabilitation gaming s
 
 import os
 import sys
-import os
 import select
 import struct
 import time
@@ -30,6 +29,20 @@ from core.gestures import GestureDetector
 from core.mappings import GestureMapping
 from core.vision_sensor import VisionSensor
 from web.server import init_app, run_server
+
+
+def generate_qr_png():
+    """Generate QR code for http://playable.local:5000 and save to web/static/qr.png."""
+    try:
+        import qrcode  # type: ignore
+        url = 'http://playable.local:5000'
+        img = qrcode.make(url)
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'web', 'static', 'qr.png')
+        img.save(out_path)
+        logging.getLogger(__name__).info(f'QR code saved to {out_path}')
+    except Exception as e:
+        logging.getLogger(__name__).warning(f'QR code generation failed: {e}')
 
 
 def setup_logging():
@@ -417,6 +430,8 @@ class PlayAbleOrchestrator:
             logger.info("=" * 60)
             
             # 1. Create Named Pipe
+            generate_qr_png()
+
             logger.info("\n[1/5] Creating Named Pipe...")
             self.create_named_pipe()
             

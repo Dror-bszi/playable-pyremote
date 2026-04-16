@@ -676,3 +676,26 @@ document.getElementById('btn-restart-system').addEventListener('click', async ()
 
     setTimeout(() => location.reload(), 8000);
 });
+
+// ── QR Code Modal ────────────────────────────────────────────────────────────
+(function () {
+    const modal   = document.getElementById('qr-modal');
+    const btnOpen = document.getElementById('btn-show-qr');
+    const btnClose = document.getElementById('qr-modal-close');
+
+    function openModal()  { modal.classList.remove('hidden'); }
+    function closeModal() { modal.classList.add('hidden'); }
+
+    btnOpen.addEventListener('click', openModal);
+    btnClose.addEventListener('click', closeModal);
+
+    // Click outside the modal box to dismiss
+    modal.addEventListener('click', function (e) {
+        if (e.target === modal) closeModal();
+    });
+
+    // Escape key to dismiss
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+    });
+})();

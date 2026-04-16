@@ -32,11 +32,11 @@ class GestureDetector:
         except Exception as e:
             raise RuntimeError(f"Failed to open camera {camera_index}: {e}")
 
-        # Initialize MediaPipe Pose
+        # Initialize MediaPipe Holistic (pose + face mesh in one pass)
         # model_complexity=0 is fastest — important for RPi5 real-time performance
-        self.mp_pose = mp.solutions.pose
+        self.mp_pose = mp.solutions.pose      # kept for PoseLandmark enums and POSE_CONNECTIONS
         self.mp_drawing = mp.solutions.drawing_utils
-        self.pose = self.mp_pose.Pose(
+        self.holistic = mp.solutions.holistic.Holistic(
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
             model_complexity=0
@@ -44,8 +44,9 @@ class GestureDetector:
 
         # State tracking
         self.previous_landmarks = None
-        self.current_frame = None       # BGR, for OpenCV drawing / web feed
-        self.current_landmarks = None
+        self.current_frame = None             # BGR, for OpenCV drawing / web feed
+        self.current_landmarks = None         # pose landmarks (NormalizedLandmarkList)
+        self.current_face_landmarks = None    # face mesh landmarks (468 points)
         self.last_frame_time = time.time()
 
         # Detection thresholds
@@ -53,7 +54,7 @@ class GestureDetector:
             'delta_threshold': 0.03,  # Speed of movement
             'raise_minimum': 0.10,    # Range of movement
             'shrug_minimum': 0.05,    # Shoulder height asymmetry for shrug
-            'mouth_open_minimum': 0.35  # Nose-to-mouth / shoulder-width ratio
+            'mouth_open_minimum': 0.02  # Lip-gap (lower_lip.y - upper_lip.y) via face mesh
         }
 
     # ------------------------------------------------------------------
@@ -93,7 +94,10 @@ class GestureDetector:
         self.current_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
 
         # Picamera2 delivers RGB888 — pass directly to MediaPipe (no conversion needed)
-        results = self.pose.process(rgb_frame)
+        results = self.holistic.process(rgb_frame)
+
+        # Always update face landmarks (may be None if face not visible)
+        self.current_face_landmarks = results.face_landmarks
 
         if results.pose_landmarks:
             self.current_landmarks = results.pose_landmarks
@@ -137,7 +141,7 @@ class GestureDetector:
             rgb_frame = self._capture_rgb()
             if rgb_frame is None:
                 return None
-            results = self.pose.process(rgb_frame)
+            results = self.holistic.process(rgb_frame)
             frame_to_use = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
             landmarks_to_use = results.pose_landmarks if results.pose_landmarks else None
         else:
@@ -427,45 +431,25 @@ class GestureDetector:
 
     def _check_mouth_open(self) -> bool:
         """
-        Detect when mouth is open beyond a threshold.
+        Detect when mouth is open using Holistic face mesh landmarks.
 
-        Uses the vertical distance from nose to mouth midpoint, normalized by
-        shoulder width, as a proxy for mouth opening.  MediaPipe Pose only
-        exposes mouth-corner landmarks (9, 10), not lip landmarks, so this is
-        an approximation — the threshold should be tuned per patient via the
-        dashboard.
+        Uses the vertical distance between upper inner lip (landmark 13)
+        and lower inner lip (landmark 14).  Y increases downward, so the
+        gap is positive and grows as the jaw drops.  No normalization
+        needed — face mesh coordinates are already face-scale invariant.
 
         Returns:
             True if gesture detected
         """
-        if self.current_landmarks is None:
+        if self.current_face_landmarks is None:
             return False
 
-        NOSE = self.mp_pose.PoseLandmark.NOSE.value
-        MOUTH_LEFT = self.mp_pose.PoseLandmark.MOUTH_LEFT.value
-        MOUTH_RIGHT = self.mp_pose.PoseLandmark.MOUTH_RIGHT.value
-        LEFT_SHOULDER = self.mp_pose.PoseLandmark.LEFT_SHOULDER.value
-        RIGHT_SHOULDER = self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value
+        upper_lip = self.current_face_landmarks.landmark[13]
+        lower_lip = self.current_face_landmarks.landmark[14]
 
-        nose = self.current_landmarks.landmark[NOSE]
-        mouth_left = self.current_landmarks.landmark[MOUTH_LEFT]
-        mouth_right = self.current_landmarks.landmark[MOUTH_RIGHT]
-        left_sh = self.current_landmarks.landmark[LEFT_SHOULDER]
-        right_sh = self.current_landmarks.landmark[RIGHT_SHOULDER]
+        lip_gap = lower_lip.y - upper_lip.y
 
-        mouth_mid_y = (mouth_left.y + mouth_right.y) / 2.0
-
-        # Vertical distance nose → mouth (positive: mouth is below nose)
-        nose_to_mouth = mouth_mid_y - nose.y
-
-        # Normalize by shoulder width so distance from camera doesn't matter
-        shoulder_width = abs(left_sh.x - right_sh.x)
-        if shoulder_width < 0.01:
-            return False
-
-        normalized = nose_to_mouth / shoulder_width
-
-        return normalized > self.thresholds['mouth_open_minimum']
+        return lip_gap > self.thresholds['mouth_open_minimum']
 
     def cleanup(self):
         """Release camera and MediaPipe resources."""
@@ -476,12 +460,12 @@ class GestureDetector:
             except Exception:
                 pass
             self._camera_started = False
-        if hasattr(self, 'pose') and self.pose:
+        if hasattr(self, 'holistic') and self.holistic:
             try:
-                self.pose.close()
+                self.holistic.close()
             except Exception:
                 pass
-            self.pose = None
+            self.holistic = None
 
     def __del__(self):
         """Ensure cleanup on deletion."""

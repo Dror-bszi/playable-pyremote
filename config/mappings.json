@@ -3,7 +3,7 @@
     "delta_threshold": 0.03,
     "raise_minimum": 0.1,
     "shrug_minimum": 0.05,
-    "mouth_open_minimum": 0.35
+    "mouth_open_minimum": 0.02
   },
   "mappings": {
     "right_elbow_raise": "CIRCLE",

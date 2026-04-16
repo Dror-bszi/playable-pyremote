@@ -22,7 +22,7 @@ class GestureMapping:
         self.thresholds = {
             'delta_threshold': 0.03,
             'shrug_minimum': 0.05,
-            'mouth_open_minimum': 0.35,
+            'mouth_open_minimum': 0.02,
             'raise_minimum': 0.10
         }
         
@@ -223,7 +223,7 @@ class GestureMapping:
             'thresholds': {
                 'delta_threshold': 0.03,
                 'shrug_minimum': 0.05,
-                'mouth_open_minimum': 0.35,
+                'mouth_open_minimum': 0.02,
                 'raise_minimum': 0.10
             },
             'mappings': {

@@ -123,6 +123,13 @@ class GestureMapping:
                 f"Valid buttons: {', '.join(valid_buttons)}"
             )
         
+        # Reload from disk first so we don't clobber concurrent changes
+        # (web server and vision_sensor each have their own GestureMapping instance)
+        try:
+            self.load_mappings(self.config_file)
+        except Exception:
+            pass
+
         # Add mapping
         self.mappings[gesture_name] = button
         
@@ -136,6 +143,12 @@ class GestureMapping:
         Args:
             gesture_name: Name of the gesture to remove
         """
+        # Reload from disk first so we don't clobber concurrent changes
+        try:
+            self.load_mappings(self.config_file)
+        except Exception:
+            pass
+
         if gesture_name in self.mappings:
             del self.mappings[gesture_name]
             # Auto-save

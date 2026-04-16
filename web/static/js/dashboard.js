@@ -58,7 +58,7 @@ async function loadPS5Devices() {
             // Show saved devices
             list.innerHTML = '';
             data.devices.forEach(device => {
-                const card = buildDeviceCard(device, data.last_host, data.username);
+                const card = buildDeviceCard(device, data.username);
                 list.appendChild(card);
             });
             savedSection.classList.remove('hidden');
@@ -73,10 +73,20 @@ async function loadPS5Devices() {
     }
 }
 
-function buildDeviceCard(device, lastHost, username) {
-    const card = document.createElement('div');
-    card.className = 'device-card';
+function buildDeviceCard(device, username) {
+    const card    = document.createElement('div');
+    card.className  = 'device-card';
     card.dataset.mac = device.mac;
+
+    const savedIp = device.ip || '';
+    const hasIp   = savedIp.length > 0;
+
+    // Rows differ based on whether we already have a saved IP
+    const ipRowHtml = hasIp
+        ? `<span class="device-ip-static">${escHtml(savedIp)}</span>
+           <a href="#" class="change-ip-link">Change IP</a>
+           <input type="text" class="device-ip-input hidden" placeholder="192.168.0.33" value="${escHtml(savedIp)}">`
+        : `<input type="text" class="device-ip-input" placeholder="192.168.0.33" value="">`;
 
     card.innerHTML = `
         <div class="device-info">
@@ -84,19 +94,42 @@ function buildDeviceCard(device, lastHost, username) {
             <span class="device-mac">${escHtml(device.mac)}</span>
         </div>
         <div class="device-connect-row">
-            <input type="text" class="device-ip-input" placeholder="192.168.0.33"
-                   value="${escHtml(lastHost || '')}" title="PS5 IP Address">
+            ${ipRowHtml}
             <button class="btn btn-success btn-sm btn-connect-device">Connect</button>
             <button class="btn btn-danger btn-sm btn-disconnect-device hidden">Disconnect</button>
             <span class="device-status-label"></span>
         </div>
     `;
 
+    const ipInput    = card.querySelector('.device-ip-input');
+    const ipStatic   = card.querySelector('.device-ip-static');
+    const changeLink = card.querySelector('.change-ip-link');
+
+    if (changeLink) {
+        changeLink.addEventListener('click', e => {
+            e.preventDefault();
+            ipStatic.style.display   = 'none';
+            changeLink.style.display = 'none';
+            ipInput.classList.remove('hidden');
+            ipInput.focus();
+            ipInput.select();
+        });
+    }
+
     card.querySelector('.btn-connect-device').addEventListener('click', () => {
-        const ip = card.querySelector('.device-ip-input').value.trim();
+        const ip = ipInput.value.trim();
         if (!ip) {
             showMessage('psn-message', 'Enter the PS5 IP address', 'error');
             return;
+        }
+        // Persist changed IP before connecting
+        if (ip !== savedIp) {
+            const rawMac = device.mac.replace(/:/g, '');
+            fetch(`/api/ps5/devices/${encodeURIComponent(rawMac)}/ip`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ip }),
+            }).catch(() => {});
         }
         connectToPS5(ip, card);
     });

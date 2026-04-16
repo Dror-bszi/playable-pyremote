@@ -191,8 +191,15 @@ class PSNConnectionManager:
             profiles.update_user(user_profile)
             profiles.save()
 
-            # Save PS5 host for future use
-            _save_ps5_config({'last_host': ps5_host})
+            # Save PS5 host for future use — persist per-MAC so Connect needs no IP input
+            _ps5_cfg = _load_ps5_config()
+            if 'device_ips' not in _ps5_cfg:
+                _ps5_cfg['device_ips'] = {}
+            _host_mac = status.get('host-id', '').upper()
+            if _host_mac:
+                _ps5_cfg['device_ips'][_host_mac] = ps5_host
+            _ps5_cfg['last_host'] = ps5_host
+            _save_ps5_config(_ps5_cfg)
 
             logger.info(f"Device registered successfully: {user_profile.name}")
             return True
@@ -571,10 +578,14 @@ def get_ps5_devices():
                             data = host_info.get('data', {})
                             # Format MAC as XX:XX:XX:XX:XX:XX
                             fmt_mac = ':'.join(mac[i:i+2] for i in range(0, 12, 2)).upper() if len(mac) == 12 else mac
+                            _ps5_cfg_d = _load_ps5_config()
+                            _device_ips = _ps5_cfg_d.get('device_ips', {})
                             devices.append({
                                 'mac': fmt_mac,
                                 'nickname': data.get('Nickname', data.get('AP-Name', 'PS5')),
                                 'type': host_info.get('type', 'PS5'),
+                                'ip': _device_ips.get(mac.upper(),
+                                      _ps5_cfg_d.get('last_host', '')),
                             })
             except Exception as e:
                 logger.warning(f"Could not load profiles: {e}")
@@ -594,6 +605,27 @@ def get_ps5_devices():
         })
     except Exception as e:
         logger.error(f"Get PS5 devices error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/ps5/devices/<mac>/ip', methods=['POST'])
+def update_device_ip(mac):
+    """Save or update the saved IP for a registered PS5 device."""
+    try:
+        data = request.get_json() or {}
+        ip = data.get('ip', '').strip()
+        if not ip:
+            return jsonify({'error': 'ip is required'}), 400
+        raw_mac = mac.replace(':', '').upper()
+        config = _load_ps5_config()
+        if 'device_ips' not in config:
+            config['device_ips'] = {}
+        config['device_ips'][raw_mac] = ip
+        config['last_host'] = ip
+        _save_ps5_config(config)
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f'Update device IP error: {e}')
         return jsonify({'error': str(e)}), 500
 
 

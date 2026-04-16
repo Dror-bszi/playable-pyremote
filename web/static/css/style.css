@@ -346,3 +346,22 @@ header {
 .modal-close:hover {
     color: #fff;
 }
+
+/* ── PS5 device card — saved-IP display ─────────────────────────────────── */
+.device-ip-static {
+    font-family: monospace;
+    font-size: 0.9rem;
+    color: #ccc;
+    margin-right: 4px;
+}
+.change-ip-link {
+    font-size: 0.75rem;
+    color: #888;
+    text-decoration: none;
+    margin-right: 8px;
+    white-space: nowrap;
+}
+.change-ip-link:hover {
+    color: #aaa;
+    text-decoration: underline;
+}

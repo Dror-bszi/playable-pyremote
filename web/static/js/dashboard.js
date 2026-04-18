@@ -353,7 +353,7 @@ function buildPairedControllerCard(dev) {
     const grabBtn = document.createElement('button');
     grabBtn.className = 'btn btn-warning btn-sm btn-ctrl-grab' + (dev.connected ? ' hidden' : '');
     grabBtn.textContent = 'Grab';
-    grabBtn.title = 'Try to steal controller from PS5 (5 attempts)';
+    grabBtn.title = 'Turn PS5 off first, press PS button on controller, then click Grab (tries for ~60s)';
     rowDiv.appendChild(grabBtn);
     grabBtn.addEventListener('click', () => grabController(dev.mac, card));
     return card;
@@ -392,14 +392,28 @@ async function connectPairedController(mac, card) {
 async function grabController(mac, card) {
     const grabBtn = card.querySelector('.btn-ctrl-grab');
     const status  = card.querySelector('.device-status-label');
-    grabBtn.disabled       = true;
-    status.textContent = 'Grabbing…';
+    grabBtn.disabled   = true;
     status.className   = 'device-status-label connecting';
+
+    // Client-side attempt counter: ticks every 3s to match server delay
+    const RETRY_DELAY = 3000;
+    let attempt = 1;
+    const TOTAL = 20;
+    const updateLabel = () => {
+        status.textContent = "Grabbing\u2026 (" + attempt + "/" + TOTAL + ")";
+    };
+    updateLabel();
+    const ticker = setInterval(() => {
+        attempt = Math.min(attempt + 1, TOTAL);
+        updateLabel();
+    }, RETRY_DELAY);
+
     try {
         const res  = await fetch('/api/bluetooth/grab', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mac }),
         });
+        clearInterval(ticker);
         const data = await res.json();
         if (data.success) {
             status.textContent = 'Connected';
@@ -410,9 +424,10 @@ async function grabController(mac, card) {
             status.textContent = 'Grab failed';
             status.className   = 'device-status-label failed';
             grabBtn.disabled   = false;
-            showMessage('bt-message', 'Grab failed after ' + data.attempts + ' attempts: ' + (data.error || 'no connection'), 'error');
+            showMessage('bt-message', 'Grab failed after ' + data.attempts + ' attempts: ' + (data.error || 'no connection') + '. Turn PS5 off, press PS button on controller, then try again.', 'error');
         }
     } catch (err) {
+        clearInterval(ticker);
         status.textContent = 'Error';
         status.className   = 'device-status-label failed';
         grabBtn.disabled   = false;

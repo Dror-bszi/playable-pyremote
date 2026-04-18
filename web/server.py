@@ -430,7 +430,7 @@ class BluetoothManager:
                 ],
             }
 
-    def grab_device(self, mac: str, retries: int = 5, delay: float = 2.0) -> dict:
+    def grab_device(self, mac: str, retries: int = 20, delay: float = 3.0) -> dict:
         """
         Attempt to connect to a paired device with retries.
         Useful for stealing a DualSense connection from a PS5.
@@ -442,11 +442,11 @@ class BluetoothManager:
                 logger.info(f"grab {mac}: attempt {attempt}/{retries}")
                 r = subprocess.run(
                     ['bluetoothctl', 'connect', mac],
-                    capture_output=True, text=True, timeout=8,
+                    capture_output=True, text=True, timeout=5,
                 )
                 if r.returncode == 0:
                     logger.info(f"grab {mac}: connected on attempt {attempt}")
-                    return {'success': True, 'attempts': attempt, 'error': None}
+                    return {'success': True, 'attempts': attempt, 'total': retries, 'error': None}
                 last_err = r.stdout.strip() or r.stderr.strip() or 'connect failed'
                 logger.info(f"grab {mac}: attempt {attempt} failed — {last_err}")
             except subprocess.TimeoutExpired:
@@ -458,7 +458,7 @@ class BluetoothManager:
             if attempt < retries:
                 time.sleep(delay)
         logger.warning(f"grab {mac}: all {retries} attempts failed")
-        return {'success': False, 'attempts': retries, 'error': last_err}
+        return {'success': False, 'attempts': retries, 'total': retries, 'error': last_err}
 
     def pair_device(self, mac: str) -> dict:
         """Pair, trust, and connect a device. Stops any active scan first."""

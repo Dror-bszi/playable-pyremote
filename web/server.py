@@ -56,7 +56,7 @@ psn_connection_manager: Optional['PSNConnectionManager'] = None
 bluetooth_manager: Optional['BluetoothManager'] = None
 
 # ANSI escape code stripper
-_ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
+_ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m|[\x01\x02]')
 
 PS5_CONFIG_PATH = 'config/ps5_config.json'
 
@@ -370,7 +370,7 @@ class BluetoothManager:
         try:
             subprocess.run(['bluetoothctl', 'power', 'on'], timeout=3, capture_output=True)
             self._scan_process = subprocess.Popen(
-                ['bluetoothctl', 'scan', 'on'],
+                ['stdbuf', '-oL', 'bluetoothctl', 'scan', 'on'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -429,6 +429,36 @@ class BluetoothManager:
                     for mac, name in self._discovered.items()
                 ],
             }
+
+    def grab_device(self, mac: str, retries: int = 5, delay: float = 2.0) -> dict:
+        """
+        Attempt to connect to a paired device with retries.
+        Useful for stealing a DualSense connection from a PS5.
+        Returns {'success': bool, 'attempts': int, 'error': str|None}.
+        """
+        last_err = None
+        for attempt in range(1, retries + 1):
+            try:
+                logger.info(f"grab {mac}: attempt {attempt}/{retries}")
+                r = subprocess.run(
+                    ['bluetoothctl', 'connect', mac],
+                    capture_output=True, text=True, timeout=8,
+                )
+                if r.returncode == 0:
+                    logger.info(f"grab {mac}: connected on attempt {attempt}")
+                    return {'success': True, 'attempts': attempt, 'error': None}
+                last_err = r.stdout.strip() or r.stderr.strip() or 'connect failed'
+                logger.info(f"grab {mac}: attempt {attempt} failed — {last_err}")
+            except subprocess.TimeoutExpired:
+                last_err = 'timed out'
+                logger.info(f"grab {mac}: attempt {attempt} timed out")
+            except Exception as e:
+                last_err = str(e)
+                logger.error(f"grab {mac}: attempt {attempt} error — {e}")
+            if attempt < retries:
+                time.sleep(delay)
+        logger.warning(f"grab {mac}: all {retries} attempts failed")
+        return {'success': False, 'attempts': retries, 'error': last_err}
 
     def pair_device(self, mac: str) -> dict:
         """Pair, trust, and connect a device. Stops any active scan first."""
@@ -756,6 +786,19 @@ def bluetooth_connect():
         return jsonify({'success': False, 'error': 'Connection timed out'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/bluetooth/grab', methods=['POST'])
+def bluetooth_grab():
+    """Connect to a paired device with retries — steals DualSense from PS5."""
+    data = request.get_json() or {}
+    mac = data.get('mac', '').strip()
+    if not mac or not re.match(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$', mac):
+        return jsonify({'error': 'Invalid MAC address'}), 400
+    if not bluetooth_manager:
+        return jsonify({'error': 'Bluetooth not available'}), 503
+    result = bluetooth_manager.grab_device(mac)
+    return jsonify(result)
 
 
 

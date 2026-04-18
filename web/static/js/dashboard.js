@@ -350,6 +350,12 @@ function buildPairedControllerCard(dev) {
     card.appendChild(infoDiv);
     card.appendChild(rowDiv);
     btn.addEventListener('click', () => connectPairedController(dev.mac, card));
+    const grabBtn = document.createElement('button');
+    grabBtn.className = 'btn btn-warning btn-sm btn-ctrl-grab' + (dev.connected ? ' hidden' : '');
+    grabBtn.textContent = 'Grab';
+    grabBtn.title = 'Try to steal controller from PS5 (5 attempts)';
+    rowDiv.appendChild(grabBtn);
+    grabBtn.addEventListener('click', () => grabController(dev.mac, card));
     return card;
 }
 
@@ -380,6 +386,37 @@ async function connectPairedController(mac, card) {
         status.className   = 'device-status-label failed';
         btn.disabled       = false;
         showMessage('bt-message', 'Error: ' + err.message, 'error');
+    }
+}
+
+async function grabController(mac, card) {
+    const grabBtn = card.querySelector('.btn-ctrl-grab');
+    const status  = card.querySelector('.device-status-label');
+    grabBtn.disabled       = true;
+    status.textContent = 'Grabbing…';
+    status.className   = 'device-status-label connecting';
+    try {
+        const res  = await fetch('/api/bluetooth/grab', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            status.textContent = 'Connected';
+            status.className   = 'device-status-label connected';
+            card.querySelector('.btn-ctrl-connect')?.classList.add('hidden');
+            grabBtn.classList.add('hidden');
+        } else {
+            status.textContent = 'Grab failed';
+            status.className   = 'device-status-label failed';
+            grabBtn.disabled   = false;
+            showMessage('bt-message', 'Grab failed after ' + data.attempts + ' attempts: ' + (data.error || 'no connection'), 'error');
+        }
+    } catch (err) {
+        status.textContent = 'Error';
+        status.className   = 'device-status-label failed';
+        grabBtn.disabled   = false;
+        showMessage('bt-message', 'Grab error: ' + err.message, 'error');
     }
 }
 

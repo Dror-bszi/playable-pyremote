@@ -802,6 +802,26 @@ def bluetooth_grab():
 
 
 
+@app.route('/api/bluetooth/usb_status')
+def bluetooth_usb_status():
+    """Return whether a DualSense is currently connected via USB."""
+    return jsonify({'connected': _dualsense_usb_connected()})
+
+
+def _dualsense_usb_connected():
+    """Return True if a DualSense (054c:0ce6) is present on USB (bus 0003)."""
+    try:
+        with open('/proc/bus/input/devices', 'r') as f:
+            blocks = f.read().split('\n\n')
+        for block in blocks:
+            info = next((l[3:] for l in block.splitlines() if l.startswith('I: ')), '')
+            if 'Bus=0003' in info and 'Vendor=054c' in info and 'Product=0ce6' in info:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _bt_dualsense_connected():
     """Return (connected, name) for the first BT-connected DualSense/Wireless Controller."""
     try:

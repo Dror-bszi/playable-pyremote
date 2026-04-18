@@ -27,6 +27,8 @@ BINARY="$SCRIPT_DIR/controller/build/detect_controller"
 PIPE_PATH="/tmp/my_pipe"
 BT_CONF="/etc/bluetooth/input.conf"
 UDEV_RULE="/etc/udev/rules.d/99-dualsense-nosniff.rules"
+USB_UDEV_RULE="/etc/udev/rules.d/99-dualsense-usb.rules"
+BT_PAIR_SCRIPT="/usr/local/bin/playable-bt-pair.sh"
 NM_PM_CONF="/etc/NetworkManager/conf.d/99-wifi-powersave.conf"
 NM_MAIN_CONF="/etc/NetworkManager/NetworkManager.conf"
 NM_DNSMASQ_DIR="/etc/NetworkManager/dnsmasq-shared.d"
@@ -153,6 +155,74 @@ UDEVEOF
     sudo udevadm control --reload-rules
     echo "  udev anti-sniff rule installed: $UDEV_RULE"
 fi
+
+# 4a-2. USB-triggered BT pairing script and udev rules.
+#
+#     When DualSense is plugged into USB:
+#       - udev fires: systemd-run launches playable-bt-pair.sh pair
+#       - Script waits 3s, then pairs + trusts + connects via BT
+#       - Result logged to /tmp/playable-bt-pair.log
+#
+#     When DualSense is unplugged from USB:
+#       - udev fires: systemd-run launches playable-bt-pair.sh connect
+#       - Script reconnects via BT immediately
+#
+#     systemd-run --no-block is used so the script runs outside the udev
+#     event timeout (bluetoothctl needs several seconds per command).
+#
+#     If you replace the DualSense controller, update DUALSENSE_MAC at the
+#     top of this script and re-run install.sh.
+
+# Write the pairing script (with the configured MAC substituted in)
+sudo tee "$BT_PAIR_SCRIPT" > /dev/null << BPEOF
+#!/bin/bash
+# PlayAble — DualSense USB-triggered BT pairing helper
+# Invoked by udev on DualSense USB connect/disconnect.
+# Usage:
+#   playable-bt-pair.sh pair     — USB plugged in: pair + trust + connect
+#   playable-bt-pair.sh connect  — USB unplugged: connect only
+
+MAC="$DUALSENSE_MAC"
+LOG="/tmp/playable-bt-pair.log"
+ACTION="\${1:-pair}"
+
+{
+    echo "=== \$(date) — \$ACTION trigger ==="
+
+    if [ "\$ACTION" = "pair" ]; then
+        echo "Waiting 3s for USB HID to settle..."
+        sleep 3
+        echo "--- bluetoothctl pair ---"
+        /usr/bin/bluetoothctl pair "\$MAC" 2>&1
+        sleep 1
+        echo "--- bluetoothctl trust ---"
+        /usr/bin/bluetoothctl trust "\$MAC" 2>&1
+        sleep 1
+    else
+        sleep 2
+    fi
+
+    echo "--- bluetoothctl connect ---"
+    /usr/bin/bluetoothctl connect "\$MAC" 2>&1
+    echo "=== done ==="
+} >> "\$LOG" 2>&1
+BPEOF
+sudo chmod +x "$BT_PAIR_SCRIPT"
+echo "  BT pairing script installed: $BT_PAIR_SCRIPT"
+
+# Install USB udev rules
+sudo tee "$USB_UDEV_RULE" > /dev/null << UDEVUSB
+# PlayAble — DualSense USB connect/disconnect BT pairing triggers
+# Sony DualSense: idVendor=054c, idProduct=0ce6
+ACTION=="add",    SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
+    ATTR{idVendor}=="054c", ATTR{idProduct}=="0ce6", \
+    RUN+="/bin/systemd-run --no-block $BT_PAIR_SCRIPT pair"
+ACTION=="remove", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
+    ATTR{idVendor}=="054c", ATTR{idProduct}=="0ce6", \
+    RUN+="/bin/systemd-run --no-block $BT_PAIR_SCRIPT connect"
+UDEVUSB
+sudo udevadm control --reload-rules
+echo "  USB udev rules installed: $USB_UDEV_RULE"
 
 # 4b. Disable WiFi power management.
 #     BCM4345C0 shares the WiFi/BT antenna. WiFi power-save mode causes
@@ -355,6 +425,11 @@ grep -q "^UserspaceHID=true" "$BT_CONF" && grep -q "^ClassicBondedOnly=false" "$
 [ -f "$UDEV_RULE" ] \
     && _chk "udev anti-sniff rule" true "" \
     || _chk "udev anti-sniff rule" false "$UDEV_RULE missing"
+
+# USB udev rules + BT pairing script
+[ -f "$USB_UDEV_RULE" ] && [ -x "$BT_PAIR_SCRIPT" ] \
+    && _chk "USB udev rules + BT pairing script" true "" \
+    || _chk "USB udev rules + BT pairing script" false "$USB_UDEV_RULE or $BT_PAIR_SCRIPT missing"
 
 # WiFi powersave config
 [ -f "$NM_PM_CONF" ] \

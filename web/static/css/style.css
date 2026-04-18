@@ -378,5 +378,14 @@ header {
     background: #e8f5e9; color: #2e7d32; border: 2px solid #4caf50;
 }
 
+.status-badge.usb-connected {
+    background: #e3f2fd; color: #1565c0; border: 2px solid #42a5f5;
+}
+.usb-badge-row { margin-bottom: 8px; }
+.usb-hint {
+    margin-bottom: 10px; padding: 8px 12px;
+    background: #f8f9ff; border-left: 3px solid #667eea; border-radius: 0 6px 6px 0;
+}
+
 .btn-warning { background: #f57c00; color: white; border-color: #e65100; }
 .btn-warning:hover { background: #e65100; }

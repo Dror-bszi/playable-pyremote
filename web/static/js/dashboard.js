@@ -857,3 +857,17 @@ document.getElementById('btn-restart-system').addEventListener('click', async ()
     setInterval(updateNetworkStatus, 5000);
     updateNetworkStatus();
 })();
+
+// ── USB Controller Detection ─────────────────────────────────────────────────
+(function () {
+    async function checkUSBStatus() {
+        try {
+            const r = await fetch('/api/bluetooth/usb_status');
+            const d = await r.json();
+            const row = document.getElementById('usb-badge-row');
+            if (row) row.classList.toggle('hidden', !d.connected);
+        } catch (e) { /* network error — ignore */ }
+    }
+    setInterval(checkUSBStatus, 5000);
+    checkUSBStatus();
+})();

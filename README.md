@@ -1,378 +1,369 @@
-# PlayAble - Rehabilitation Gaming System
+# PlayAble — Rehabilitation Gaming System
 
-PlayAble is a hybrid gesture-to-game control system designed for physical rehabilitation. The system enables specific PlayStation buttons to be triggered by body movements detected via computer vision while maintaining full functionality of a physical PS5 DualSense controller.
+PlayAble is a hybrid gesture-to-game control system designed for physical
+rehabilitation. It maps body movements (detected via a Raspberry Pi camera +
+MediaPipe pose/face landmarks) onto PlayStation 5 button presses, while also
+forwarding inputs from a physical DualSense controller. Therapists can
+configure gesture→button mappings live from a web dashboard, and patients
+play real PS5 games using a mix of physical and movement-based controls.
 
-## Overview
+> **Status:** working proof of concept on Raspberry Pi 5. Honest perf today:
+> ~10 FPS vision (see [Known Limitations](#known-limitations)). Roadmap and
+> gap analysis are in [`docs/gap_analysis.md`](docs/gap_analysis.md).
 
-PlayAble helps rehabilitation patients reconnect through gaming and movement by combining traditional controller input with therapeutic body movements. The system uses MediaPipe for pose detection, allowing therapists to map specific body movements (like arm raises or extensions) to PlayStation button presses.
+## Table of contents
 
-### Key Features
+- [How it works](#how-it-works)
+- [Hardware](#hardware)
+- [Architecture](#architecture)
+- [Gestures](#gestures)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Web dashboard](#web-dashboard)
+- [Bluetooth — DualSense pairing](#bluetooth--dualsense-pairing)
+- [Network — WiFi & hotspot fallback](#network--wifi--hotspot-fallback)
+- [Auto-start (systemd)](#auto-start-systemd)
+- [Configuration files](#configuration-files)
+- [Known limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [Repository layout](#repository-layout)
+- [License & acknowledgements](#license--acknowledgements)
 
-- **Gesture-Based Controls**: Map body movements to PlayStation buttons using computer vision
-- **Hybrid Input**: Use physical DualSense controller and gestures simultaneously
-- **Real-Time Adjustment**: Adjust movement sensitivity thresholds during therapy sessions
-- **Web Dashboard**: Monitor patient movements and configure the system via web interface
-- **Low Latency**: End-to-end latency under 150ms for responsive gaming
-- **Raspberry Pi Compatible**: Runs on affordable Raspberry Pi 4 hardware
+## How it works
 
-## System Requirements
+1. The **camera** captures the patient at 640×480.
+2. The **Vision Sensor** (Python) feeds frames into MediaPipe Holistic
+   (pose + face landmarks) and evaluates a set of rule-based gesture
+   detectors (e.g. *right elbow raise*, *mouth open*).
+3. When a gesture passes a 3-frame debounce, the Vision Sensor writes a
+   `BUTTON_NAME\npress|release\n\n` message to `/tmp/my_pipe`.
+4. The **Hardware Producer** (C++/SDL2) concurrently writes button and
+   analog-stick messages from the physical DualSense to the same pipe.
+5. The **Remote Play Client** (`pyremoteplay`) reads the pipe and forwards
+   each input to the PS5 over the Sony Remote Play protocol.
+6. The **Web Dashboard** (Flask) is the therapist's control surface:
+   live video feed with pose overlay, gesture/button mapping editor,
+   threshold sliders, PSN auth, BT pairing, WiFi setup.
 
-### Hardware
+Target end-to-end latency: **< 150 ms**. Actual today: not directly measured;
+slow-frame logs imply ~100 ms in the Python loop alone. See
+[`docs/gap_analysis.md`](docs/gap_analysis.md) §1.2.
 
-- **Raspberry Pi 4** (4GB RAM recommended) running 64-bit Raspberry Pi OS
-- **Camera**: USB webcam or Raspberry Pi Camera Module
-- **DualSense Controller**: Sony PlayStation 5 wireless controller
-- **PS5 Console**: Connected to the same local network
-- **Network**: Wired Ethernet connection recommended for lower latency
+## Hardware
 
-### Software
+| Item | Notes |
+|---|---|
+| **Raspberry Pi 5** (8 GB) | BCM2712 4×A76 @ 2.4 GHz. Pi 4 is **not** sufficient for the current pipeline. |
+| **IMX708 CSI camera** (Pi Camera Module 3) | Configured at 640×480 RGB888 via Picamera2. |
+| **Sony DualSense** wireless controller | Bluetooth or USB-C. MAC currently pinned in `install.sh`. |
+| **PlayStation 5** | Remote Play must be enabled; PSN account with Remote Play permission. |
+| Local WiFi network (or none — see [hotspot](#network--wifi--hotspot-fallback)) | Same LAN as the PS5. |
 
-- Raspberry Pi OS (64-bit) or compatible Linux distribution
-- Python 3.9 or higher
-- SDL2 library
-- CMake and build tools
-- OpenCV and MediaPipe
+## Architecture
+
+Six components — three of them are pipe writers:
+
+```
+              ┌───────────────────────┐
+   camera ──▶ │ Vision Sensor (Py)    │──▶┐
+              └───────────────────────┘   │
+              ┌───────────────────────┐   │
+  DualSense ─▶│ Hardware Producer (C++)│──▶│  /tmp/my_pipe  ──▶  pyremoteplay  ──▶  PS5
+              └───────────────────────┘   │  (named pipe)        (PipeReader)       (Remote Play)
+              ┌───────────────────────┐   │
+ evdev event7 │ TouchpadReader (Py)    │──▶┘
+              └───────────────────────┘
+                       ▲
+                       │ config / status / video
+              ┌───────────────────────┐
+              │ Web Dashboard (Flask) │  ←── therapist
+              └───────────────────────┘
+              ┌───────────────────────┐
+              │ WiFi Manager (Py)     │  ←── station / hotspot fallback
+              └───────────────────────┘
+```
+
+**Why three writers?** The DualSense touchpad click is reported on a
+separate evdev node (`/dev/input/event7`) that SDL2's `GameController` API
+does not see over Bluetooth, so `TouchpadReader` reads it directly.
+
+**Atomicity:** all messages are ≤100 B, well below Linux's `PIPE_BUF`
+(4096 B), so concurrent writes are atomic by kernel guarantee. This is a
+fragile invariant — see [`docs/gap_analysis.md`](docs/gap_analysis.md) §2.5.
+
+## Gestures
+
+| Gesture | Detector | Default threshold | Notes |
+|---|---|---|---|
+| `left_elbow_raise` | elbow.y above shoulder.y by `raise_minimum`, or upward delta_y < −`delta_threshold` | 0.10 / 0.03 | Position OR motion trigger |
+| `right_elbow_raise` | same, mirrored | 0.10 / 0.03 | |
+| `left_arm_forward` | wrist.z toward camera by delta_threshold | 0.03 | Uses MediaPipe pseudo-depth — noisy |
+| `right_arm_forward` | same, mirrored | 0.03 | |
+| `left_shoulder_shrug` | shoulder.y rises by `shrug_minimum` | 0.05 | Compared to opposite shoulder; no baseline calibration |
+| `right_shoulder_shrug` | same, mirrored | 0.05 | |
+| `mouth_open` | lip gap > `mouth_open_minimum` | 0.02 | Face mesh; no face-size normalization yet |
+
+Mappings target any DualSense button: `CROSS`, `CIRCLE`, `SQUARE`, `TRIANGLE`,
+`L1`, `R1`, `L2`, `R2`. Mappings are configured live from the dashboard and
+persist in `config/mappings.json`, which the Vision Sensor re-reads every 3 s.
 
 ## Installation
 
-### Quick Install
-
-Run the automated installation script:
+The installer is a single script that handles system packages, Python
+dependencies, the C++ build, hostname & mDNS, Bluetooth/udev rules, WiFi
+power-save, captive-portal DNS, and the systemd unit:
 
 ```bash
-chmod +x install.sh
+git clone https://github.com/Dror-bszi/playable-pyremote.git ~/playable
+cd ~/playable
 ./install.sh
+sudo reboot
 ```
 
-The script will:
-1. Install system dependencies (SDL2, OpenCV, CMake)
-2. Create Python virtual environment
-3. Install Python dependencies
-4. Compile the Hardware Producer (C++ component)
-5. Create the Named Pipe for inter-process communication
-
-### Manual Installation
-
-If you prefer to install manually:
-
-1. **Install system dependencies:**
-   ```bash
-   sudo apt-get update
-   sudo apt-get install -y libsdl2-dev python3-opencv cmake python3-venv python3-pip build-essential
-   ```
-
-2. **Create Python virtual environment:**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-
-3. **Install Python dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Compile Hardware Producer:**
-   ```bash
-   cd controller
-   mkdir build && cd build
-   cmake ..
-   make
-   cd ../..
-   ```
-
-5. **Create Named Pipe:**
-   ```bash
-   mkfifo /tmp/my_pipe
-   chmod 666 /tmp/my_pipe
-   ```
+After reboot, `playable.service` starts automatically. The dashboard is
+reachable at `http://playable-<id>.local:5000` (the `<id>` is the last 4
+hex chars of `/proc/cpuinfo` Serial; on the reference device it is
+`playable-c0e1`).
 
 ## Usage
 
-### Starting the System
+```bash
+# Status / logs / restart
+sudo systemctl status playable
+sudo journalctl -u playable -f
+sudo systemctl restart playable
 
-1. **Pair your DualSense controller** via Bluetooth:
-   ```bash
-   bluetoothctl
-   scan on
-   pair [CONTROLLER_MAC_ADDRESS]
-   connect [CONTROLLER_MAC_ADDRESS]
-   ```
-
-2. **Connect your camera** (USB or Pi Camera)
-
-3. **Activate virtual environment:**
-   ```bash
-   source venv/bin/activate
-   ```
-
-4. **Start PlayAble:**
-   ```bash
-   python main.py
-   ```
-
-The system will start three components:
-- Hardware Producer (captures DualSense controller input)
-- Vision Sensor (detects body movements via camera)
-- Web Dashboard (monitoring and configuration interface)
-
-### Accessing the Web Dashboard
-
-Open your web browser and navigate to:
-```
-http://localhost:5000
+# Manual run (overrides the service — stop the service first)
+sudo systemctl stop playable
+source ~/playable/venv/bin/activate
+python ~/playable/main.py
 ```
 
-Or from another device on the same network:
+Once running:
+
+1. Open the dashboard.
+2. Authenticate with PSN (one-time — tokens persist in `config/psn_tokens.json`).
+3. Pair the DualSense if not already done — see [Bluetooth](#bluetooth--dualsense-pairing).
+4. Configure gesture→button mappings.
+5. Click **Connect to PS5**. The Remote Play session starts and the pipe
+   reader attaches; until that moment, the C++ producer and Vision Sensor
+   loop quietly with no consumer.
+
+## Web dashboard
+
+Routes (Flask, defined in `web/server.py`):
+
+- `/` — main dashboard
+- `/setup` — WiFi setup page (also the captive portal target in hotspot mode)
+- `/video_feed` — MJPEG live camera feed with MediaPipe overlay
+- `/api/status` — system status (camera, FPS, mappings)
+- `/api/ps5/devices` — saved PS5 devices from pyremoteplay profile
+- `/api/controller/status` — DualSense state from HW Producer
+- `/api/bluetooth/*` — scan, pair, connect, grab (USB-triggered pairing),
+  paired-device list, USB/BT status
+- `/api/psn/*` — OAuth flow, PIN, callback
+- `/api/remoteplay/*` — start, stop, status
+- `/api/mappings/*` — list, add, remove
+- `/api/thresholds/*` — get, set
+- `/api/network/*` — current mode, scan, connect, hostname
+- `/api/system/restart` — restart the service (or `_restart.sh` in dev)
+
+Dashboard features include: pose-overlay video feed, QR code modal for the
+dashboard URL, BT scan & pair, Grab Controller button (60 s retry window
+when USB cable is plugged in), threshold sliders, network mode badge.
+
+## Bluetooth — DualSense pairing
+
+PlayAble installs system-level Bluetooth changes (see `install.sh`):
+
+- `/etc/bluetooth/input.conf` — `UserspaceHID=true`, `ClassicBondedOnly=false`
+- `/etc/udev/rules.d/99-dualsense-nosniff.rules` — disables BT L2CAP sniff
+  mode on the DualSense via `hcitool lp <MAC> rswitch`, run 2 s after the
+  input node appears. Without this, the BCM4345C0 chip on the Pi 5 puts
+  the link into sniff mode and HID report rate collapses, freezing input.
+- `/etc/NetworkManager/conf.d/99-wifi-powersave.conf` — disables WiFi PM
+  (BCM4345C0 shares WiFi/BT antenna; WiFi PM stalls BT).
+
+### Pairing flows
+
+**Wireless pairing** — one-shot bluetoothctl session:
+
+```bash
+bluetoothctl remove <MAC> 2>/dev/null; true
+# DualSense in pairing mode (PS + Create), rapid flash, then:
+{ echo "agent NoInputNoOutput"; echo "default-agent"; sleep 1
+  echo "scan on"; sleep 8; echo "scan off"
+  echo "pair <MAC>"; sleep 10
+  echo "trust <MAC>"; sleep 1
+  echo "connect <MAC>"; sleep 8; echo "quit"
+} | bluetoothctl
 ```
-http://[RASPBERRY_PI_IP]:5000
+
+**USB-triggered pairing (Grab Controller)** — plug the DualSense in over
+USB-C, click **Grab Controller** in the dashboard. The server polls
+`/dev/hidraw*` looking for the DualSense USB device for up to 60 s
+(20 attempts × 3 s) with a live attempt counter in the UI. The controller
+then auto-bonds to the Pi for subsequent wireless use.
+
+After reboot: press the PS button on the DualSense — it auto-reconnects.
+
+## Network — WiFi & hotspot fallback
+
+PlayAble must reach a network for PS5 Remote Play; therapists deploying it
+in a clinic without WiFi need a way to configure it. On startup
+(`main.py:check_and_configure_network`):
+
+1. Wait up to 20 s for a WiFi station connection.
+2. If WiFi is up → log the SSID and continue.
+3. If no WiFi → call `WiFiManager.start_hotspot()`:
+   - `nmcli` creates an AP profile in shared mode (NM handles DHCP).
+   - SSID `PlayAble-<ID>`, IP 192.168.4.1, no password.
+   - `dnsmasq` (via NM's `dnsmasq-shared.d`) redirects all DNS → 192.168.4.1.
+   - An `nft` table (`playable-nat`) redirects TCP :80 → :5000 so phone
+     captive-portal probes hit Flask.
+4. Phone connects to `PlayAble-<ID>` → "Sign in to network" popup → Flask
+   serves `/setup` → user picks SSID, enters password, hits Connect.
+5. On success, a QR code for `http://playable-<id>.local:5000` is shown.
+
+> NetworkManager auto-names the WiFi station profile `preconfigured`, **not**
+> the SSID. To bring it down: `sudo nmcli con down preconfigured`.
+
+> RPi OS Bookworm ships only `nft` (no `iptables`). NM is configured with
+> `firewall-backend=nftables` so its own masquerading uses nft too.
+
+## Auto-start (systemd)
+
+`install.sh` writes `/etc/systemd/system/playable.service`:
+
+```ini
+[Unit]
+Description=PlayAble Rehabilitation Gaming System
+After=network.target bluetooth.target
+Wants=network.target bluetooth.target
+
+[Service]
+Type=simple
+User=drorb
+WorkingDirectory=/home/drorb/playable
+ExecStart=/home/drorb/playable/venv/bin/python3 /home/drorb/playable/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
 ```
 
-## PSN Authentication and PS5 Connection
+The dashboard **Restart System** button detects `INVOCATION_ID` to choose
+between `systemctl restart playable` (when running as a service) and a
+detached `_restart.sh` shim (when run directly).
 
-The web dashboard provides a complete interface for connecting to your PS5:
+## Configuration files
 
-### Step 1: PSN Login
+| File | Purpose |
+|---|---|
+| `config/mappings.json` | Gesture→button mappings + thresholds. Re-read every 3 s. |
+| `config/ps5_config.json` | Last connected PS5 host + MAC→IP map. |
+| `config/psn_tokens.json` | PSN OAuth tokens (online_id, credentials). Persist across reboots. |
 
-1. Click **"Start PSN Login"** in the PSN Connection Panel
-2. The system will display a PlayStation Network authorization URL
-3. Open the URL in a web browser and log in with your PSN account
-4. After logging in, you'll be redirected to a blank page
-
-### Step 2: Capture Redirect URL
-
-1. Copy the entire URL from the browser's address bar (starts with `https://remoteplay.dl.playstation.net/remoteplay/redirect`)
-2. Paste the URL into the **"Redirect URL"** field in the dashboard
-3. Click **"Submit Redirect URL"**
-
-### Step 3: Enter PIN Code
-
-1. On your PS5, go to **Settings → System → Remote Play**
-2. Enable Remote Play if not already enabled
-3. Select **"Link Device"** to display a PIN code
-4. Enter the PIN code in the dashboard's **"PIN Code"** field
-5. Click **"Submit PIN"**
-
-### Step 4: Connect to PS5
-
-1. Once authenticated, click **"Connect to PS5"**
-2. The system will start the Remote Play session
-3. Connection status will update to show "PS5 Connected"
-
-### Disconnecting
-
-Click **"Disconnect from PS5"** to end the Remote Play session. Your authentication tokens are saved, so you won't need to repeat the PSN login process unless you clear the configuration.
-
-## Gesture Mapping Configuration
-
-### Available Gestures
-
-- **Left Elbow Raise**: Raise left elbow upward
-- **Right Elbow Raise**: Raise right elbow upward
-- **Left Arm Forward**: Extend left arm toward camera
-- **Right Arm Forward**: Extend right arm toward camera
-- **Shoulder Shrug**: Raise both shoulders
-
-### Available Buttons
-
-- Face Buttons: CROSS, CIRCLE, SQUARE, TRIANGLE
-- Shoulder Buttons: L1, R1, L2, R2
-
-### Creating Gesture Mappings
-
-1. In the **Gesture Mapping** section of the dashboard:
-2. Select a gesture from the dropdown
-3. Select a PlayStation button from the dropdown
-4. Click **"Add Mapping"**
-5. The gesture will now trigger the selected button when detected
-
-### Adjusting Sensitivity
-
-Use the **Threshold Controls** to adjust detection sensitivity:
-
-- **Delta Threshold** (0.01 - 0.5): Speed of movement required to trigger detection
-  - Lower values = more sensitive (detects slower movements)
-  - Higher values = less sensitive (requires faster movements)
-
-- **Raise Minimum** (0.0 - 1.0): Range of movement required to trigger detection
-  - Lower values = smaller movements trigger detection
-  - Higher values = larger movements required
-
-Adjust these values based on the patient's physical capabilities and range of motion.
-
-## System Architecture
-
-PlayAble consists of four main components:
-
-1. **Hardware Producer** (C++ SDL2): Captures physical DualSense controller input
-2. **Vision Sensor** (Python MediaPipe): Detects body movements via camera
-3. **Remote Play Client** (pyremoteplay): Communicates with PS5 console
-4. **Web Dashboard** (Flask): Monitoring and configuration interface
-
-All components communicate via a Named Pipe (`/tmp/my_pipe`) for low-latency data transfer.
-
-## Troubleshooting
-
-### Camera Not Detected
-
-**Problem**: "Camera not found" error in logs
-
-**Solutions**:
-- Verify camera is connected: `ls /dev/video*`
-- Check camera permissions: `sudo usermod -a -G video $USER`
-- Try different camera index in `core/vision_sensor.py`
-- For Pi Camera, enable camera interface: `sudo raspi-config` → Interface Options → Camera
-
-### DualSense Controller Not Connecting
-
-**Problem**: Controller not detected by Hardware Producer
-
-**Solutions**:
-- Verify Bluetooth pairing: `bluetoothctl devices`
-- Check controller battery level
-- Re-pair controller: Remove device and pair again
-- Verify SDL2 can detect controller: `sdl2-jstest --list`
-
-### PS5 Connection Failed
-
-**Problem**: Cannot connect to PS5 via Remote Play
-
-**Solutions**:
-- Verify PS5 and Raspberry Pi are on same network
-- Check PS5 Remote Play is enabled: Settings → System → Remote Play
-- Verify network connectivity: `ping [PS5_IP_ADDRESS]`
-- Check firewall settings on network router
-- Try wired Ethernet connection instead of WiFi
-
-### High Latency / Low FPS
-
-**Problem**: System feels sluggish or camera feed is choppy
-
-**Solutions**:
-- Close other applications to free CPU resources
-- Reduce camera resolution in `core/gestures.py`
-- Use wired Ethernet instead of WiFi for PS5 connection
-- Check CPU temperature: `vcgencmd measure_temp` (should be < 80°C)
-- Verify adequate power supply (official Raspberry Pi power adapter recommended)
-
-### Named Pipe Errors
-
-**Problem**: "Pipe write failure" or "Pipe read failure" in logs
-
-**Solutions**:
-- Verify pipe exists: `ls -l /tmp/my_pipe`
-- Recreate pipe: `rm /tmp/my_pipe && mkfifo /tmp/my_pipe && chmod 666 /tmp/my_pipe`
-- Check pipe permissions: Should show `prw-rw-rw-`
-- Restart the system: `python main.py`
-
-### Web Dashboard Not Accessible
-
-**Problem**: Cannot access dashboard at http://localhost:5000
-
-**Solutions**:
-- Verify Flask is running: Check console output for "Running on http://0.0.0.0:5000"
-- Check if port is in use: `sudo lsof -i :5000`
-- Try alternative port: Edit `web/server.py` to use different port
-- Check firewall: `sudo ufw status`
-- Access via IP address: `http://[RASPBERRY_PI_IP]:5000`
-
-### Gestures Not Detected
-
-**Problem**: Body movements not triggering button presses
-
-**Solutions**:
-- Check camera feed in dashboard shows pose skeleton overlay
-- Verify gesture mappings are configured in dashboard
-- Adjust Delta Threshold to lower value (more sensitive)
-- Adjust Raise Minimum to lower value (smaller movements)
-- Ensure adequate lighting for camera
-- Stand at appropriate distance from camera (2-3 meters recommended)
-- Verify MediaPipe is detecting landmarks (check console logs)
-
-### PSN Authentication Fails
-
-**Problem**: Cannot complete PSN login or PIN submission
-
-**Solutions**:
-- Verify internet connection on Raspberry Pi
-- Check PSN account credentials are correct
-- Ensure PS5 Remote Play is enabled on console
-- Try generating new PIN code on PS5
-- Clear stored tokens: Delete config files and restart authentication
-- Check system time is correct: `date` (PSN requires accurate time)
-
-## Configuration Files
-
-### config/mappings.json
-
-Stores gesture mappings and threshold settings:
+Example `mappings.json`:
 
 ```json
 {
   "thresholds": {
-    "delta_threshold": 0.05,
-    "raise_minimum": 0.1
+    "delta_threshold": 0.03,
+    "shrug_minimum": 0.05,
+    "mouth_open_minimum": 0.02,
+    "raise_minimum": 0.10
   },
   "mappings": {
-    "left_elbow_raise": "SQUARE",
     "right_elbow_raise": "CIRCLE",
-    "left_arm_forward": "L1",
-    "right_arm_forward": "R1"
+    "left_elbow_raise": "CROSS",
+    "mouth_open": "TRIANGLE"
   }
 }
 ```
 
-Edit this file directly or use the web dashboard to modify settings.
+## Known limitations
 
-## Known Issues
+These are tracked in detail in [`docs/gap_analysis.md`](docs/gap_analysis.md).
+Short list:
 
-- **Simultaneous R2/L2 Input**: Minor delay when buttons pressed simultaneously with R2 or L2 triggers
-- **Pi Camera Compatibility**: Some Pi Camera modules may require additional configuration
-- **Network Latency**: WiFi connections may introduce additional latency (wired recommended)
+- **Vision FPS is ~10**, not 30+. Three compounding causes: MediaPipe Holistic
+  runs when only Pose is needed; the `/video_feed` endpoint re-runs inference
+  per frame; the legacy MediaPipe Python API does not use the Pi 5 GPU
+  delegate. (gap_analysis.md §2.2)
+- **FPS instrument is broken** — `vision_sensor.py:240–263` divides total
+  frames by total process uptime; the log shows `0.0` while real loop time
+  is ~100 ms.
+- **No landmark smoothing** — raw MediaPipe coordinates drive thresholds.
+  No Kalman, EMA, or One-Euro filter. Frame-to-frame noise dominates at
+  current FPS.
+- **No tests, no labeled dataset, no precision/recall numbers.** Gesture
+  thresholds are heuristic, not validated.
+- **No end-to-end latency instrumentation.** Only the Python loop is timed.
+- **Three pipe writers with no synchronization.** Safe today because
+  message size < PIPE_BUF, but undocumented in code.
+- **`mappings.json` on the deployed device has `raise_minimum: 0.05`** (half
+  the code default) — false-positive prone.
+- **No per-subject calibration.** Resting shoulder asymmetry, neutral elbow
+  position, and lip gap are not measured.
+- **BT sniff-mode mitigation is fragile** — depends on a 2 s udev delay.
+- **Flask dev server** does not stop cleanly within the shutdown timeout.
+- **pyremoteplay** logs ~10 "Version not accepted" protobuf errors during
+  session negotiation. Cosmetic — does not prevent READY state.
 
-## Development
+## Roadmap
 
-### Project Structure
+Three milestones from `docs/gap_analysis.md`:
+
+- **M1 (1–2 weeks) — Make it measurable.** Fix FPS instrument; add per-event
+  latency UUIDs; switch Holistic→Pose; fix `/video_feed` double-inference.
+- **M2 (2–4 weeks) — Make it robust.** One-Euro filter; hysteresis on
+  thresholds; visibility checks on landmarks; pytest suite for mappings,
+  debounce, pipe parser; split `web/server.py` into blueprints.
+- **M3 (4–8 weeks) — Make it research-defensible.** Patient profiles:
+  per-subject baseline calibration saved to `config/profiles/<id>.json`.
+  Recorded-clip evaluation harness (5 subjects × 7 gestures, hand-labeled,
+  precision/recall + confusion matrix). Migrate to
+  `mp.tasks.vision.PoseLandmarker` with GPU delegate. Thermal monitoring.
+  Auto-exposure lock.
+
+## Repository layout
 
 ```
 playable/
-├── controller/          # Hardware Producer (C++ SDL2)
+├── controller/                  # Hardware Producer (C++ SDL2)
 │   ├── main.cpp
-│   └── CMakeLists.txt
-├── core/               # Vision Sensor (Python)
-│   ├── gestures.py     # MediaPipe gesture detection
-│   ├── mappings.py     # Gesture mapping configuration
-│   └── vision_sensor.py # Main vision loop
-├── pyremoteplay/       # Remote Play client library
-├── web/                # Web Dashboard (Flask)
-│   ├── server.py
-│   ├── templates/
-│   └── static/
-├── config/             # Configuration files
-│   └── mappings.json
-├── main.py             # Main orchestrator
-├── requirements.txt    # Python dependencies
-└── install.sh          # Installation script
+│   ├── CMakeLists.txt
+│   └── build/detect_controller  # compiled binary
+├── core/                        # Vision Sensor (Python)
+│   ├── gestures.py              # MediaPipe + gesture detectors
+│   ├── mappings.py              # GestureMapping (load/save/validate)
+│   └── vision_sensor.py         # main loop, debounce, pipe write
+├── network/
+│   ├── __init__.py
+│   └── wifi_manager.py          # WiFiManager + get_hostname() (serial-based)
+├── pyremoteplay/                # in-tree fork of pyremoteplay
+│   └── pipe_reader.py           # reads /tmp/my_pipe → Controller API
+├── web/                         # Flask dashboard
+│   ├── server.py                # routes + PSN/BT/network managers
+│   ├── templates/{dashboard,setup}.html
+│   └── static/{css,js,qr.png}
+├── config/
+│   ├── mappings.json
+│   ├── ps5_config.json
+│   └── psn_tokens.json
+├── docs/
+│   └── gap_analysis.md          # PoC→academic gap analysis
+├── debugging_utils/             # manual scripts (not pytest)
+├── main.py                      # orchestrator + TouchpadReader
+├── install.sh                   # full system bring-up
+├── requirements.txt
+└── README.md                    # this file
 ```
 
-### Contributing
+## License & acknowledgements
 
-This is a rehabilitation-focused project. When contributing, please consider:
-- Accessibility for users with limited mobility
-- Clear documentation for therapists and patients
-- Low latency for responsive gaming experience
-- Robust error handling for reliability
-
-## License
-
-[Add your license information here]
-
-## Acknowledgments
-
-- MediaPipe by Google for pose estimation
-- pyremoteplay library for PS5 Remote Play communication
-- SDL2 for controller input handling
-
-## Support
-
-For issues, questions, or feature requests, please [add contact information or issue tracker link]
+- **MediaPipe** (Google) — pose & face landmark detection
+- **pyremoteplay** — PS5 Remote Play protocol (vendored in `pyremoteplay/`)
+- **SDL2** — DualSense input on Linux
+- **NetworkManager + nft + dnsmasq + avahi** — networking stack

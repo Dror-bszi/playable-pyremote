@@ -52,12 +52,19 @@ to build or fix, and you will implement it, test it, and iterate.
 - **Hardware:** Raspberry Pi 5, IMX708 CSI camera, DualSense controller (Bluetooth)
 
 ## Architecture
-Five components:
-1. Hardware Producer (C++) — reads DualSense input via SDL2, writes to pipe
-2. Vision Sensor (Python) — detects gestures via camera, writes to pipe
-3. Remote Play Client (pyremoteplay) — PipeReader reads pipe, forwards to PS5
-4. Web Dashboard (Flask) — therapist UI for config and monitoring
-5. WiFi Manager (Python) — hotspot fallback when no WiFi at startup
+Six components, three of which write to the named pipe:
+1. **Hardware Producer** (C++) — reads DualSense buttons/sticks via SDL2 → pipe
+2. **Vision Sensor** (Python) — detects gestures via camera → pipe
+3. **TouchpadReader** (Python, main.py:78–119) — reads /dev/input/event7 evdev
+   directly (SDL2 doesn't see touchpad over BT) → pipe
+4. **Remote Play Client** (pyremoteplay) — PipeReader reads pipe → forwards to PS5
+5. **Web Dashboard** (Flask) — therapist UI for config, monitoring, BT scan,
+   PSN auth, WiFi/hotspot, video feed
+6. **WiFi Manager** (Python) — station detection at startup, hotspot AP fallback
+
+Pipe atomicity: messages are <100 B, well under Linux PIPE_BUF (4096 B), so
+concurrent writes from the three producers are atomic by kernel guarantee.
+This is fragile if message format grows — not enforced in code.
 
 ## Project Structure
 
@@ -255,45 +262,86 @@ Sends neutral axes if SDL silent 200ms → prevents PS5 latching stale non-zero 
 - The dashboard shows a re-auth link; follow it, copy the redirect URL back in
 
 ## Current Status
-- **Last worked on:** 2026-04-16
-- **Last completed:**
-  - WiFi hotspot fallback: PlayAble-C0E1 AP with captive portal
-    - network/wifi_manager.py: serial-based device ID, hotspot start/stop
-    - NM shared mode (DHCP), dnsmasq DNS redirect, nft port 80→5000
-    - /setup page: scan, select, connect, QR code on success
-    - Dashboard Network panel: WiFi/Hotspot badge, SSID, link to /setup
-    - Back button on /setup (visible in WiFi mode only)
-  - systemd service: playable.service auto-starts on boot
-    - Restart button now uses `systemctl restart` when INVOCATION_ID is set
-  - Fixed captive portal: iptables → nft (RPi OS Bookworm has no iptables)
-    - NM firewall-backend=nftables added to NetworkManager.conf
-  - Hotspot fallback verified: WiFi down → 20s wait → PlayAble-C0E1 active
-    - dnsmasq confirmed running with --conf-dir=dnsmasq-shared.d
-    - playable-nat nft table confirmed with :80→:5000 redirect
-  - install.sh comprehensive overhaul: all system config in one script
-    - Added: dnsmasq, avahi-daemon, udev anti-sniff, WiFi powersave,
-      NM firewall-backend, hostname from serial, captive portal config
-    - Renumbered sections [0/10]…[10/10], verification pass at end
+- **Last worked on:** 2026-06-10
+- **Last completed (since 2026-04-16):**
+  - Gesture set expanded to 7 gestures (core/gestures.py):
+    - left/right_elbow_raise, left/right_arm_forward (z-axis),
+      left/right_shoulder_shrug, mouth_open (face mesh)
+  - Switched vision pipeline from MediaPipe Pose → Holistic
+    (pose + face in one pass; hands sub-model unused — see gap_analysis.md)
+  - Added TouchpadReader (main.py:78–119): reads /dev/input/event7 directly,
+    bypasses SDL2 (BT GameController API never fires touchpad). This adds
+    a THIRD writer to /tmp/my_pipe — see Architecture note below.
+  - Bluetooth: USB-triggered BT pairing flow + Grab Controller button
+    (60s window, 20×3s retries, live attempt counter in UI)
+  - Bluetooth: BT scan + paired-device list in dashboard
+  - Dashboard: QR code modal for dashboard URL; mDNS hostname displayed
+  - C++ producer: uint16 sequence-number overflow fix (control loss after ~65535 sends)
+  - C++ producer: stdout pipe blocking fix (root cause of intermittent control loss)
+  - log rotation: run.log → run.log.1 on every startup (main.py:91–95)
+  - Fixed valid_gestures list in core/mappings.py to include the 3 new gestures
+  - Wrote docs/gap_analysis.md — academic-grade PoC→final gap report
 
-- **Next task:** Full gesture → PS5 test session; then add shoulder shrug gesture
+- **Next tasks (priority order):**
+  1. Critical perf fixes from gap_analysis.md:
+     - Fix broken FPS instrument (rolling window) — vision_sensor.py:240–263
+     - Switch Holistic → Pose-only (hands model is dead weight) — gestures.py:42
+     - Stop /video_feed re-running MediaPipe per request — gestures.py:165
+     - Add One-Euro filter on landmarks before thresholding
+  2. Add end-to-end latency instrumentation (per-event UUID, hop timestamps)
+  3. Restore raise_minimum to 0.10 in config/mappings.json (currently 0.05 → FP-prone)
+  4. Document & guard the 3-writer pipe protocol (PIPE_BUF size constraint)
+  5. Add pytest suite (mappings, debounce, pipe parser)
+  6. **Patient profiles (planned, not built):** per-subject calibration baseline
+     (resting shoulder asymmetry, neutral elbow position, lip gap) saved to
+     config/profiles/<subject_id>.json, subtracted from runtime measurements.
+     Required for academic-grade reproducibility.
+  7. Recorded-clip eval harness (5 subjects × 7 gestures, labeled, P/R metrics)
+
+- **Architecture note: THREE pipe writers** (not two as docs once said):
+  1. Hardware Producer (C++)
+  2. Vision Sensor (Python)
+  3. TouchpadReader (Python, main.py:78–119) — reads evdev directly
+  All write multi-line messages <100 B (under PIPE_BUF = 4096 B) so writes
+  are atomic by Linux pipe semantics. NOT enforced in code — fragile if
+  message format grows.
 
 - **Known issues:**
+  - **Vision FPS ~10 (target 30+)** — three compounding causes documented in
+    docs/gap_analysis.md §2.2: Holistic instead of Pose, /video_feed double
+    inference, legacy MediaPipe API on CPU
+  - **FPS instrument reports 0.0** — bug in vision_sensor.py:240–263 (divides
+    total frames by total uptime; not a rolling window)
+  - **No landmark smoothing** — raw MediaPipe coords drive thresholds, see
+    gap_analysis.md §1.4
+  - **No tests** — gap_analysis.md §1.7
   - WiFi connection profile is named `preconfigured` by NM (not the SSID);
-    `nmcli con down "Dror&Yuval"` fails — use `nmcli con down preconfigured`
+    use `nmcli con down preconfigured`
   - pyremoteplay is started via the web dashboard UI, not by main.py —
     pipe writers loop waiting for a reader until pyremoteplay connects
-  - Vision Sensor FPS is ~20-26 (target 30+) — MediaPipe pose detection is the
-    bottleneck on RPi5; not yet optimized
   - Flask dev server thread does not stop cleanly within 5s on shutdown
-    (logs a warning, exits eventually)
   - pyremoteplay logs ~10 "Version not accepted" protobuf errors during
     session negotiation — pre-existing, does not prevent READY state
   - udev sniff-disable rule 'sleep 2' delay may need tuning on slow BT reconnects
 
 ## Gesture Configuration
-- **Current mappings:** right_elbow_raise → CIRCLE, left_elbow_raise → CROSS
-- **Thresholds:** delta_threshold=0.03 (speed), raise_minimum=0.10 (height)
+- **All gestures (7):**
+  - `left_elbow_raise`, `right_elbow_raise` — vertical elbow rise above shoulder
+  - `left_arm_forward`, `right_arm_forward` — wrist z-axis toward camera
+  - `left_shoulder_shrug`, `right_shoulder_shrug` — shoulder rise above baseline
+  - `mouth_open` — lip gap from face mesh (no face-size normalization yet)
+- **Live config:** `right_elbow_raise → CIRCLE` only; other mappings unassigned
+- **Thresholds (config/mappings.json):**
+  - `delta_threshold=0.03` (motion speed)
+  - `raise_minimum=0.05` (height — NOTE: code default is 0.10; current value
+    is half — FP-prone per gap_analysis.md §1.5)
+  - `shrug_minimum=0.05`, `mouth_open_minimum=0.02`
 - **Debounce:** 3 press frames, 3 release frames
 - **Config file:** config/mappings.json (live-reloaded every 3s by vision_sensor)
 - **Restart:** Dashboard "Restart System" button → `systemctl restart playable`
   (when running as a service) or writes `_restart.sh` and runs it detached (direct)
+
+## Reference docs
+- `docs/gap_analysis.md` — PoC vs final-project gap analysis with line-cited findings,
+  20-item recommendation table, and 3-milestone roadmap. Read this before any
+  meaningful refactor or performance work.

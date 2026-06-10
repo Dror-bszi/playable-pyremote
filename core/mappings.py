@@ -101,7 +101,10 @@ class GestureMapping:
             'left_elbow_raise',
             'right_elbow_raise',
             'left_arm_forward',
-            'right_arm_forward'
+            'right_arm_forward',
+            'left_shoulder_shrug',
+            'right_shoulder_shrug',
+            'mouth_open'
         ]
         
         if gesture_name not in valid_gestures:
